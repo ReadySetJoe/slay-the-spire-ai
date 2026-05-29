@@ -48,6 +48,8 @@ class GameLoop:
                 summary["total_runs"], summary["wins"], summary["losses"],
                 summary["win_rate"] * 100, summary["avg_floor"],
             )
+            if hasattr(self.agent, 'on_game_over'):
+                self.agent.on_game_over(state)
             self.communicator.send_command("PROCEED")
             return True
 
@@ -88,6 +90,8 @@ class GameLoop:
                     summary["total_runs"], summary["wins"], summary["losses"],
                     summary["win_rate"] * 100, summary["avg_floor"],
                 )
+                if hasattr(self.agent, 'on_game_over'):
+                    self.agent.on_game_over(state)
                 self.communicator.send_command("PROCEED")
                 continue
 
