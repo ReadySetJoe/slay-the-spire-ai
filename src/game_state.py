@@ -44,7 +44,7 @@ class GameState:
         data = json.loads(json_str)
         state = cls(raw=data)
 
-        state.available_commands = data.get("available_commands", [])
+        state.available_commands = [c.upper() for c in data.get("available_commands", [])]
         state.ready_for_command = data.get("ready_for_command", False)
         state.in_game = data.get("in_game", False)
         state.error = data.get("error")

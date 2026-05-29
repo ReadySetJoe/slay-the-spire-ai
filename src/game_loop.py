@@ -31,8 +31,13 @@ class GameLoop:
         if not state.ready_for_command:
             return True
 
+        if not state.in_game:
+            logger.debug("Not in game, waiting for game to start.")
+            return True
+
         action = self.agent.act(state)
-        logger.info("Floor %d | HP %d/%d | Action: %s", state.floor, state.current_hp, state.max_hp, action)
+        logger.info("Floor %d | HP %d/%d | Screen: %s | Action: %s",
+                    state.floor, state.current_hp, state.max_hp, state.screen_type, action)
         self.communicator.send_command(action)
         return True
 
@@ -53,6 +58,12 @@ class GameLoop:
             if not state.ready_for_command:
                 continue
 
+            if not state.in_game:
+                logger.debug("Not in game, waiting for game to start.")
+                continue
+
+            logger.debug("Screen: %s | Commands: %s", state.screen_type, state.available_commands)
             action = self.agent.act(state)
-            logger.info("Floor %d | HP %d/%d | Action: %s", state.floor, state.current_hp, state.max_hp, action)
+            logger.info("Floor %d | HP %d/%d | Screen: %s | Action: %s",
+                        state.floor, state.current_hp, state.max_hp, state.screen_type, action)
             self.communicator.send_command(action)

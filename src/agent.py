@@ -30,6 +30,19 @@ class SimpleAgent(Agent):
         if state.screen_type == "MAP":
             return self._handle_map(state)
 
+        if state.screen_type == "EVENT":
+            return "CHOOSE 0"
+
+        if state.screen_type in ("SHOP_ROOM", "SHOP_SCREEN"):
+            return "PROCEED"
+
+        if state.screen_type in ("GRID", "HAND_SELECT"):
+            if "CHOOSE" in state.available_commands:
+                return "CHOOSE 0"
+            if "CONFIRM" in state.available_commands:
+                return "CONFIRM"
+            return "CANCEL"
+
         if state.screen_type == "COMBAT_REWARD":
             return "PROCEED"
 
@@ -42,6 +55,10 @@ class SimpleAgent(Agent):
         if "CHOOSE" in state.available_commands:
             return "CHOOSE 0"
 
+        if "CONFIRM" in state.available_commands:
+            return "CONFIRM"
+
+        logger.warning("Unhandled screen type: %s | Commands: %s", state.screen_type, state.available_commands)
         return "STATE"
 
     def _handle_combat(self, state: GameState) -> str:
