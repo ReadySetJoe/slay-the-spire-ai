@@ -4,6 +4,7 @@ import logging
 from src.communicator import Communicator
 from src.agent import SimpleAgent
 from src.game_loop import GameLoop
+from src.run_tracker import RunTracker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,7 +16,8 @@ logging.basicConfig(
 def main():
     communicator = Communicator()
     agent = SimpleAgent()
-    loop = GameLoop(communicator, agent)
+    tracker = RunTracker(log_path="data/run_log.jsonl")
+    loop = GameLoop(communicator, agent, run_tracker=tracker)
     loop.run()
 
 
