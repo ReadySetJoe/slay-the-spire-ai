@@ -1,5 +1,6 @@
 # src/callbacks.py
 import logging
+from collections import deque
 from stable_baselines3.common.callbacks import BaseCallback
 
 logger = logging.getLogger(__name__)
@@ -12,7 +13,7 @@ class EpisodeLoggerCallback(BaseCallback):
         super().__init__(verbose=0)
         self.summary_freq = summary_freq
         self._episode_count = 0
-        self._episode_stats: list = []
+        self._episode_stats: deque = deque(maxlen=self.summary_freq)
 
     def _on_step(self) -> bool:
         dones = self.locals.get("dones", [])
@@ -32,7 +33,7 @@ class EpisodeLoggerCallback(BaseCallback):
             self.num_timesteps,
         )
         if self._episode_count % self.summary_freq == 0:
-            recent = self._episode_stats[-self.summary_freq:]
+            recent = list(self._episode_stats)
             avg_r = sum(e["r"] for e in recent) / len(recent)
             avg_l = sum(e["l"] for e in recent) / len(recent)
             win_rate = sum(1 for e in recent if e["r"] > 0) / len(recent)
