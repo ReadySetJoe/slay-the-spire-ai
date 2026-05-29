@@ -4,6 +4,9 @@ import json
 from src.game_loop import GameLoop
 from src.agent import SimpleAgent
 from src.communicator import Communicator
+from src.run_tracker import RunTracker
+import tempfile
+import os
 
 
 def make_state(screen_type="NONE", commands=None, in_game=True, combat=True):
@@ -70,3 +73,58 @@ def test_game_loop_stops_on_eof():
     loop.step()
     output = out.getvalue()
     assert output == "ready\n"  # Only ready, no action (EOF)
+
+
+def make_game_over(victory=False):
+    data = {
+        "available_commands": ["PROCEED"],
+        "ready_for_command": True,
+        "in_game": True,
+        "game_state": {
+            "screen_type": "GAME_OVER",
+            "screen_state": {"victory": victory},
+            "seed": 1, "floor": 10, "ascension_level": 0, "class": "IRONCLAD",
+            "current_hp": 0, "max_hp": 80, "gold": 50,
+            "deck": [{"id": "Strike_R"}], "relics": [{"id": "Burning Blood"}],
+            "potions": [], "map": [], "act": 1,
+            "combat_state": None,
+        },
+    }
+    return json.dumps(data)
+
+
+def make_menu_state():
+    return json.dumps({
+        "available_commands": ["START"],
+        "ready_for_command": True,
+        "in_game": False,
+    })
+
+
+def test_game_loop_handles_game_over():
+    """Game over should record stats and PROCEED."""
+    inp = io.StringIO(make_game_over() + "\n")
+    out = io.StringIO()
+    comm = Communicator(input_stream=inp, output_stream=out)
+    agent = SimpleAgent()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tracker = RunTracker(log_path=os.path.join(tmpdir, "log.jsonl"))
+        loop = GameLoop(comm, agent, run_tracker=tracker)
+        loop.step()
+        output_lines = out.getvalue().strip().split("\n")
+        assert output_lines[-1] == "PROCEED"
+        assert tracker.run_number == 1
+
+
+def test_game_loop_auto_starts_new_run():
+    """When not in game, should send START command."""
+    inp = io.StringIO(make_menu_state() + "\n")
+    out = io.StringIO()
+    comm = Communicator(input_stream=inp, output_stream=out)
+    agent = SimpleAgent()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tracker = RunTracker(log_path=os.path.join(tmpdir, "log.jsonl"))
+        loop = GameLoop(comm, agent, run_tracker=tracker)
+        loop.step()
+        output_lines = out.getvalue().strip().split("\n")
+        assert output_lines[-1] == "START IRONCLAD 0"
