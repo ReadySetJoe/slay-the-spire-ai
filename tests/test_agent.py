@@ -142,3 +142,89 @@ def test_map_chooses_node():
     agent = SimpleAgent()
     action = agent.act(state)
     assert action.startswith("CHOOSE")
+
+
+COMBAT_REWARD_WITH_REWARDS = json.dumps({
+    "available_commands": ["CHOOSE", "PROCEED"],
+    "ready_for_command": True,
+    "in_game": True,
+    "game_state": {
+        "screen_type": "COMBAT_REWARD",
+        "screen_state": {
+            "rewards": [
+                {"reward_type": "GOLD", "gold": 25},
+                {"reward_type": "POTION", "potion": {"id": "Fire Potion", "name": "Fire Potion"}},
+                {"reward_type": "CARD"},
+            ]
+        },
+        "seed": 1, "floor": 1, "ascension_level": 0, "class": "IRONCLAD",
+        "current_hp": 70, "max_hp": 80, "gold": 99,
+        "deck": [], "relics": [],
+        "potions": [
+            {"id": "Potion Slot", "name": "Potion Slot"},
+            {"id": "Potion Slot", "name": "Potion Slot"},
+        ],
+        "map": [], "act": 1,
+        "combat_state": None,
+    }
+})
+
+COMBAT_REWARD_POTIONS_FULL = json.dumps({
+    "available_commands": ["CHOOSE", "PROCEED"],
+    "ready_for_command": True,
+    "in_game": True,
+    "game_state": {
+        "screen_type": "COMBAT_REWARD",
+        "screen_state": {
+            "rewards": [
+                {"reward_type": "GOLD", "gold": 25},
+                {"reward_type": "POTION", "potion": {"id": "Fire Potion", "name": "Fire Potion"}},
+            ]
+        },
+        "seed": 1, "floor": 1, "ascension_level": 0, "class": "IRONCLAD",
+        "current_hp": 70, "max_hp": 80, "gold": 99,
+        "deck": [], "relics": [],
+        "potions": [
+            {"id": "Fire Potion", "name": "Fire Potion"},
+            {"id": "Block Potion", "name": "Block Potion"},
+        ],
+        "map": [], "act": 1,
+        "combat_state": None,
+    }
+})
+
+COMBAT_REWARD_NO_REWARDS = json.dumps({
+    "available_commands": ["PROCEED"],
+    "ready_for_command": True,
+    "in_game": True,
+    "game_state": {
+        "screen_type": "COMBAT_REWARD",
+        "screen_state": {"rewards": []},
+        "seed": 1, "floor": 1, "ascension_level": 0, "class": "IRONCLAD",
+        "current_hp": 70, "max_hp": 80, "gold": 99,
+        "deck": [], "relics": [], "potions": [], "map": [], "act": 1,
+        "combat_state": None,
+    }
+})
+
+
+def test_combat_reward_chooses_first_reward():
+    state = GameState.from_json(COMBAT_REWARD_WITH_REWARDS)
+    agent = SimpleAgent()
+    action = agent.act(state)
+    assert action == "CHOOSE 0"
+
+
+def test_combat_reward_no_rewards_proceeds():
+    state = GameState.from_json(COMBAT_REWARD_NO_REWARDS)
+    agent = SimpleAgent()
+    action = agent.act(state)
+    assert action == "PROCEED"
+
+
+def test_combat_reward_skips_potion_when_full():
+    state = GameState.from_json(COMBAT_REWARD_POTIONS_FULL)
+    agent = SimpleAgent()
+    action = agent.act(state)
+    # Should choose gold (index 0), not potion (index 1) since potions are full
+    assert action == "CHOOSE 0"

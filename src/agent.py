@@ -44,7 +44,7 @@ class SimpleAgent(Agent):
             return "CANCEL"
 
         if state.screen_type == "COMBAT_REWARD":
-            return "PROCEED"
+            return self._handle_combat_reward(state)
 
         if state.screen_type == "BOSS_REWARD":
             return "CHOOSE 0"
@@ -98,6 +98,26 @@ class SimpleAgent(Agent):
         if hp_ratio < 0.6:
             return "CHOOSE rest"
         return "CHOOSE smith"
+
+    def _handle_combat_reward(self, state: GameState) -> str:
+        rewards = []
+        if state.screen_state:
+            rewards = state.screen_state.get("rewards", [])
+
+        if not rewards or "CHOOSE" not in state.available_commands:
+            return "PROCEED"
+
+        potion_slots_full = all(
+            p.get("id") != "Potion Slot" for p in state.potions
+        )
+
+        for i, reward in enumerate(rewards):
+            rtype = reward.get("reward_type", "")
+            if rtype == "POTION" and potion_slots_full:
+                continue
+            return f"CHOOSE {i}"
+
+        return "PROCEED"
 
     def _handle_map(self, state: GameState) -> str:
         return "CHOOSE 0"
