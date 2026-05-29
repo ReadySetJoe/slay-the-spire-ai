@@ -40,7 +40,6 @@ class CombatEnv(gym.Env):
         self.action_space = spaces.Discrete(ActionSpace.TOTAL_ACTIONS)
 
         self._current_state: Optional[GameState] = None
-        self._combat_start_hp: int = 0
         self._episode_steps: int = 0
         self._buffered_state: Optional[GameState] = None
         self._initialized: bool = False
@@ -60,7 +59,6 @@ class CombatEnv(gym.Env):
 
         state = self._advance_to_combat()
         self._current_state = state
-        self._combat_start_hp = state.current_hp
         logger.debug("Combat started: floor=%d hp=%d/%d",
                      state.floor, state.current_hp, state.max_hp)
         return self.encoder.encode(state), {}
@@ -98,6 +96,8 @@ class CombatEnv(gym.Env):
             }
         }
 
+        # GAME_OVER is always handled here and never buffered — _buffered_state stays None.
+        # _advance_to_combat() also handles GAME_OVER but only for deaths between episodes.
         if state.screen_type == "GAME_OVER":
             self.run_tracker.record_run(state)
             summary = self.run_tracker.summary()
@@ -135,6 +135,7 @@ class CombatEnv(gym.Env):
                 continue
 
             if not state.ready_for_command:
+                logger.debug("Waiting for game to be ready (screen=%s)", state.screen_type)
                 state = None
                 continue
 

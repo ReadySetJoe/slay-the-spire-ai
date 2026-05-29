@@ -89,7 +89,6 @@ def test_step_continues_combat():
     comm.receive_state.return_value = _combat(hp=65)
     env = CombatEnv(communicator=comm)
     env._current_state = _combat(hp=70)
-    env._combat_start_hp = 70
 
     obs, reward, done, truncated, info = env.step(ActionSpace.END_TURN_ACTION)
 
@@ -105,7 +104,6 @@ def test_step_combat_ends_buffers_state():
     comm.receive_state.return_value = reward_state
     env = CombatEnv(communicator=comm)
     env._current_state = _combat(hp=70)
-    env._combat_start_hp = 70
 
     obs, reward, done, truncated, info = env.step(ActionSpace.END_TURN_ACTION)
 
@@ -120,7 +118,6 @@ def test_step_combat_ends_includes_episode_info():
     comm.receive_state.return_value = _reward_screen(hp=65, floor=2)
     env = CombatEnv(communicator=comm)
     env._current_state = _combat(hp=70, floor=2)
-    env._combat_start_hp = 70
 
     _, _, _, _, info = env.step(ActionSpace.END_TURN_ACTION)
 
@@ -134,7 +131,6 @@ def test_step_game_over_sends_proceed():
     comm.receive_state.return_value = _game_over(hp=0)
     env = CombatEnv(communicator=comm)
     env._current_state = _combat(hp=10)
-    env._combat_start_hp = 10
 
     _, reward, done, _, _ = env.step(ActionSpace.END_TURN_ACTION)
 
