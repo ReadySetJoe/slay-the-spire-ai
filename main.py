@@ -57,6 +57,8 @@ def main():
 
         logger.info("Starting RL training (MaskablePPO)...")
         model.learn(total_timesteps=10_000_000, callback=callbacks)
+        model.save(model_path)
+        logger.info("Training complete. Final model saved to %s", model_path)
     else:
         from src.agent import SimpleAgent
         from src.game_loop import GameLoop
