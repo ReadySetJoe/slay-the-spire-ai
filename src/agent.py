@@ -2,6 +2,7 @@
 import logging
 from abc import ABC, abstractmethod
 
+from src.card_tier_list import pick_best_card
 from src.game_state import GameState
 
 logger = logging.getLogger(__name__)
@@ -85,9 +86,14 @@ class SimpleAgent(Agent):
         return f"PLAY {card_index}"
 
     def _handle_card_reward(self, state: GameState) -> str:
-        # Always pick first offered card for now
-        if "CHOOSE" in state.available_commands:
-            return "CHOOSE 0"
+        if "CHOOSE" not in state.available_commands:
+            return "PROCEED"
+        cards = []
+        if state.screen_state:
+            cards = state.screen_state.get("cards", [])
+        best = pick_best_card(cards)
+        if best is not None:
+            return f"CHOOSE {best}"
         return "PROCEED"
 
     def _handle_rest(self, state: GameState) -> str:

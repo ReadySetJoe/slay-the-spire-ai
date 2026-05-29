@@ -228,3 +228,32 @@ def test_combat_reward_skips_potion_when_full():
     action = agent.act(state)
     # Should choose gold (index 0), not potion (index 1) since potions are full
     assert action == "CHOOSE 0"
+
+
+CARD_REWARD_WITH_TIERS = json.dumps({
+    "available_commands": ["CHOOSE", "PROCEED"],
+    "ready_for_command": True,
+    "in_game": True,
+    "game_state": {
+        "screen_type": "CARD_REWARD",
+        "screen_state": {
+            "cards": [
+                {"id": "Strike_R", "name": "Strike", "cost": 1, "type": "ATTACK"},
+                {"id": "Offering", "name": "Offering", "cost": 0, "type": "SKILL"},
+                {"id": "Inflame", "name": "Inflame", "cost": 1, "type": "POWER"},
+            ]
+        },
+        "seed": 1, "floor": 1, "ascension_level": 0, "class": "IRONCLAD",
+        "current_hp": 70, "max_hp": 80, "gold": 99,
+        "deck": [], "relics": [], "potions": [], "map": [], "act": 1,
+        "combat_state": None,
+    }
+})
+
+
+def test_card_reward_picks_best_tier():
+    state = GameState.from_json(CARD_REWARD_WITH_TIERS)
+    agent = SimpleAgent()
+    action = agent.act(state)
+    # Offering is S tier (index 1), should pick it
+    assert action == "CHOOSE 1"
