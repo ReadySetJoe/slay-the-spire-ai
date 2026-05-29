@@ -18,6 +18,20 @@ class Agent(ABC):
 class SimpleAgent(Agent):
     """Rule-based agent that plays Ironclad with simple heuristics."""
 
+    HEALING_POTIONS = {"Fruit Juice", "Blood Potion", "Fairy in a Bottle",
+                       "Regen Potion", "Ancient Potion"}
+
+    ATTACK_POTIONS = {"Fire Potion", "Explosive Potion", "Poison Potion",
+                      "Fear Potion", "Strength Potion", "Dexterity Potion",
+                      "Speed Potion", "Weak Potion", "Energy Potion",
+                      "Swift Potion", "Flex Potion", "Steroid Potion",
+                      "Focus Potion", "Cultist Potion", "Liquid Bronze",
+                      "Essence of Steel", "Heart of Iron", "Ghost In A Jar",
+                      "Ambrosia", "Liquid Memories", "Distilled Chaos",
+                      "Duplication Potion", "Blessing of the Forge",
+                      "Elixir", "Gambler's Brew", "Entropic Brew",
+                      "Smoke Bomb", "Snecko Oil", "Block Potion"}
+
     def act(self, state: GameState) -> str:
         if state.is_in_combat:
             return self._handle_combat(state)
@@ -63,6 +77,11 @@ class SimpleAgent(Agent):
         return "STATE"
 
     def _handle_combat(self, state: GameState) -> str:
+        if "POTION" in state.available_commands:
+            potion_action = self._check_potions(state)
+            if potion_action:
+                return potion_action
+
         playable = [
             (i, card) for i, card in enumerate(state.hand)
             if card.get("is_playable", False)
@@ -84,6 +103,38 @@ class SimpleAgent(Agent):
         if card.get("has_target", False):
             return f"PLAY {card_index} {target}"
         return f"PLAY {card_index}"
+
+    def _check_potions(self, state: GameState) -> str | None:
+        hp_ratio = state.current_hp / max(state.max_hp, 1)
+        is_tough_fight = any(
+            m.get("max_hp", 0) > 100 for m in state.monsters
+            if not m.get("is_gone", False)
+        )
+
+        target = 0
+        for i, m in enumerate(state.monsters):
+            if not m.get("is_gone", False):
+                target = i
+                break
+
+        for i, potion in enumerate(state.potions):
+            if not potion.get("can_use", False):
+                continue
+            pid = potion.get("id", "")
+
+            # Use healing potions when low
+            if pid in self.HEALING_POTIONS and hp_ratio < 0.4:
+                if potion.get("requires_target", False):
+                    return f"POTION Use {i} {target}"
+                return f"POTION Use {i}"
+
+            # Use attack/buff potions on tough fights
+            if pid in self.ATTACK_POTIONS and is_tough_fight:
+                if potion.get("requires_target", False):
+                    return f"POTION Use {i} {target}"
+                return f"POTION Use {i}"
+
+        return None
 
     def _handle_card_reward(self, state: GameState) -> str:
         if "CHOOSE" not in state.available_commands:

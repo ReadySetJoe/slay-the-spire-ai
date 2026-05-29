@@ -257,3 +257,109 @@ def test_card_reward_picks_best_tier():
     action = agent.act(state)
     # Offering is S tier (index 1), should pick it
     assert action == "CHOOSE 1"
+
+
+COMBAT_LOW_HP_WITH_POTION = json.dumps({
+    "available_commands": ["PLAY", "END", "POTION"],
+    "ready_for_command": True,
+    "in_game": True,
+    "game_state": {
+        "screen_type": "NONE",
+        "seed": 1, "floor": 1, "ascension_level": 0, "class": "IRONCLAD",
+        "current_hp": 20, "max_hp": 80, "gold": 99,
+        "deck": [], "relics": [],
+        "potions": [
+            {"id": "Fruit Juice", "name": "Fruit Juice", "can_use": True, "can_discard": True, "requires_target": False},
+        ],
+        "map": [], "act": 1,
+        "combat_state": {
+            "hand": [
+                {"id": "Strike_R", "name": "Strike", "cost": 1, "type": "ATTACK",
+                 "is_playable": True, "has_target": True, "uuid": "a1"},
+            ],
+            "draw_pile": [], "discard_pile": [], "exhaust_pile": [],
+            "monsters": [
+                {"name": "Jaw Worm", "current_hp": 42, "max_hp": 42, "block": 0, "intent": "ATTACK", "is_gone": False},
+            ],
+            "player": {"current_hp": 20, "max_hp": 80, "block": 0, "energy": 3, "powers": []},
+            "turn": 1,
+        },
+    }
+})
+
+COMBAT_FULL_HP_WITH_POTION = json.dumps({
+    "available_commands": ["PLAY", "END", "POTION"],
+    "ready_for_command": True,
+    "in_game": True,
+    "game_state": {
+        "screen_type": "NONE",
+        "seed": 1, "floor": 1, "ascension_level": 0, "class": "IRONCLAD",
+        "current_hp": 80, "max_hp": 80, "gold": 99,
+        "deck": [], "relics": [],
+        "potions": [
+            {"id": "Fruit Juice", "name": "Fruit Juice", "can_use": True, "can_discard": True, "requires_target": False},
+        ],
+        "map": [], "act": 1,
+        "combat_state": {
+            "hand": [
+                {"id": "Strike_R", "name": "Strike", "cost": 1, "type": "ATTACK",
+                 "is_playable": True, "has_target": True, "uuid": "a1"},
+            ],
+            "draw_pile": [], "discard_pile": [], "exhaust_pile": [],
+            "monsters": [
+                {"name": "Jaw Worm", "current_hp": 42, "max_hp": 42, "block": 0, "intent": "ATTACK", "is_gone": False},
+            ],
+            "player": {"current_hp": 80, "max_hp": 80, "block": 0, "energy": 3, "powers": []},
+            "turn": 1,
+        },
+    }
+})
+
+COMBAT_ELITE_WITH_ATTACK_POTION = json.dumps({
+    "available_commands": ["PLAY", "END", "POTION"],
+    "ready_for_command": True,
+    "in_game": True,
+    "game_state": {
+        "screen_type": "NONE",
+        "seed": 1, "floor": 1, "ascension_level": 0, "class": "IRONCLAD",
+        "current_hp": 70, "max_hp": 80, "gold": 99,
+        "deck": [], "relics": [],
+        "potions": [
+            {"id": "Fire Potion", "name": "Fire Potion", "can_use": True, "can_discard": True, "requires_target": True},
+        ],
+        "map": [], "act": 1,
+        "combat_state": {
+            "hand": [
+                {"id": "Strike_R", "name": "Strike", "cost": 1, "type": "ATTACK",
+                 "is_playable": True, "has_target": True, "uuid": "a1"},
+            ],
+            "draw_pile": [], "discard_pile": [], "exhaust_pile": [],
+            "monsters": [
+                {"name": "Gremlin Nob", "current_hp": 106, "max_hp": 106, "block": 0, "intent": "ATTACK", "is_gone": False},
+            ],
+            "player": {"current_hp": 70, "max_hp": 80, "block": 0, "energy": 3, "powers": []},
+            "turn": 1,
+        },
+    }
+})
+
+
+def test_use_potion_when_low_hp():
+    state = GameState.from_json(COMBAT_LOW_HP_WITH_POTION)
+    agent = SimpleAgent()
+    action = agent.act(state)
+    assert action == "POTION Use 0"
+
+
+def test_no_potion_when_full_hp():
+    state = GameState.from_json(COMBAT_FULL_HP_WITH_POTION)
+    agent = SimpleAgent()
+    action = agent.act(state)
+    assert action.startswith("PLAY")
+
+
+def test_use_attack_potion_on_elite():
+    state = GameState.from_json(COMBAT_ELITE_WITH_ATTACK_POTION)
+    agent = SimpleAgent()
+    action = agent.act(state)
+    assert action == "POTION Use 0 0"
