@@ -91,6 +91,8 @@ class SimpleAgent(Agent):
         return "PROCEED"
 
     def _handle_rest(self, state: GameState) -> str:
+        if "CHOOSE" not in state.available_commands:
+            return "PROCEED"
         # Rest if below 60% HP, otherwise smith
         hp_ratio = state.current_hp / max(state.max_hp, 1)
         if hp_ratio < 0.6:
