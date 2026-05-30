@@ -65,8 +65,11 @@ def _load_model(model_path: str, checkpoint_dir: str, env):
 def main():
     use_rl = "--rl" in sys.argv
 
+    from src.live_state import LiveStateWriter
+    live_writer = LiveStateWriter(path="data/live_state.json")
+
     communicator = Communicator()
-    tracker = RunTracker(log_path="data/run_log.jsonl")
+    tracker = RunTracker(log_path="data/run_log.jsonl", live_state_writer=live_writer)
 
     from src.card_scorer import CardScorer
     scorer = CardScorer(path="data/card_scores.json")
@@ -117,7 +120,8 @@ def main():
         from src.game_loop import GameLoop
 
         agent = SimpleAgent(scorer=scorer)
-        loop = GameLoop(communicator, agent, run_tracker=tracker)
+        loop = GameLoop(communicator, agent, run_tracker=tracker,
+                        live_state_writer=live_writer)
         loop.run()
 
 
