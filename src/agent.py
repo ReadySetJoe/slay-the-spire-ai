@@ -72,25 +72,32 @@ class SimpleAgent(Agent):
         if state.screen_type == "CHEST":
             if "OPEN" in state.available_commands:
                 return "OPEN"
+            if "CHOOSE" in state.available_commands:
+                return "CHOOSE 0"
             if "PROCEED" in state.available_commands:
                 return "PROCEED"
 
         if state.screen_type == "EVENT":
             return self._handle_event(state)
 
-        if state.screen_type == "SHOP_ROOM":
-            return "PROCEED"
-
-        if state.screen_type == "SHOP_SCREEN":
+        if state.screen_type in ("SHOP_ROOM", "SHOP_SCREEN"):
             return self._handle_shop_screen(state)
 
         if state.screen_type in ("GRID", "HAND_SELECT"):
-            if "CHOOSE" in state.available_commands:
-                cards = state.screen_state.get("cards", []) if state.screen_state else []
-                best = pick_best_card(cards) if cards else None
-                return f"CHOOSE {best if best is not None else 0}"
+            # CONFIRM takes priority: sent once enough cards are selected
             if "CONFIRM" in state.available_commands:
                 return "CONFIRM"
+            if "CHOOSE" in state.available_commands:
+                cards = state.screen_state.get("cards", []) if state.screen_state else []
+                # Only consider cards not already selected to avoid deselect oscillation
+                unselected = [(i, c) for i, c in enumerate(cards)
+                              if not c.get("selected", False)]
+                if unselected:
+                    best_local = pick_best_card([c for _, c in unselected])
+                    best_idx = unselected[best_local if best_local is not None else 0][0]
+                else:
+                    best_idx = 0
+                return f"CHOOSE {best_idx}"
             return "CANCEL"
 
         if state.screen_type == "COMBAT_REWARD":
@@ -219,10 +226,19 @@ class SimpleAgent(Agent):
         ss = state.screen_state or {}
         name = ss.get("event_name") or ss.get("name") or "unknown"
         options = ss.get("options", [])
-        n_options = len(options) if options else 2  # safe fallback
-        choice = random.randrange(n_options)
-        logger.info("EVENT | %s | %d options | chose %d | full_state=%s",
-                    name, n_options, choice, ss)
+        # Use choice_index from each option dict — that's what CommunicationMod
+        # expects in the CHOOSE command. Filter out disabled options.
+        enabled = [
+            opt.get("choice_index", i)
+            for i, opt in enumerate(options)
+            if not opt.get("disabled", False)
+        ]
+        if not enabled:
+            # All options disabled (shouldn't happen) — fall back to first
+            enabled = [options[0].get("choice_index", 0)] if options else [0]
+        choice = random.choice(enabled)
+        logger.info("EVENT | %s | %d options (%d enabled) | chose %d | full_state=%s",
+                    name, len(options), len(enabled), choice, ss)
         return f"CHOOSE {choice}"
 
     def _handle_map(self, state: GameState) -> str:
