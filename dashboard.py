@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 from flask import Flask, Response
 
 app = Flask(__name__)
@@ -12,12 +13,12 @@ _LIVE_HTML = """<!DOCTYPE html>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: transparent;
+    background: #14142a;
     font-family: monospace;
     color: #e0e0e0;
   }
   .panel {
-    background: rgba(20, 20, 40, 0.92);
+    background: #1a1a2e;
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 8px;
     padding: 16px 18px;
@@ -77,6 +78,7 @@ _LIVE_HTML = """<!DOCTYPE html>
   <div class="last-action" id="last-action">—</div>
   <div class="section-label" id="enemies-label" style="display:none">Enemies</div>
   <div id="enemies"></div>
+  <div id="debug-line" style="margin-top:10px;font-size:9px;color:#555;"></div>
 </div>
 <script>
 const ICONS = {
@@ -117,7 +119,16 @@ async function poll() {
         `</div>`
       ).join("");
     }
-  } catch (e) {}
+    const dbg = document.getElementById("debug-line");
+    if (live.updated_at) {
+      const secs = Math.round((Date.now() - new Date(live.updated_at)) / 1000);
+      dbg.textContent = `updated ${secs}s ago · ${data._path || ""}`;
+    } else {
+      dbg.textContent = `no data · ${data._path || ""}`;
+    }
+  } catch (e) {
+    document.getElementById("debug-line").textContent = "fetch error: " + e;
+  }
 }
 setInterval(poll, 2500);
 poll();
@@ -131,9 +142,9 @@ _STATS_HTML = """<!DOCTYPE html>
 <meta charset="utf-8">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: transparent; font-family: monospace; color: #e0e0e0; }
+  body { background: #14142a; font-family: monospace; color: #e0e0e0; }
   .panel {
-    background: rgba(20, 20, 40, 0.92);
+    background: #1a1a2e;
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 8px;
     padding: 16px 18px;
@@ -191,13 +202,38 @@ poll();
 
 @app.route("/api/state")
 def api_state():
-    if not os.path.exists(LIVE_STATE_PATH):
-        return Response("{}", status=200, mimetype="application/json")
+    abs_path = os.path.abspath(LIVE_STATE_PATH)
+    if not os.path.exists(abs_path):
+        return Response(
+            json.dumps({"_path": abs_path, "_exists": False}),
+            status=200, mimetype="application/json",
+        )
     try:
-        with open(LIVE_STATE_PATH) as f:
-            return Response(f.read(), status=200, mimetype="application/json")
-    except OSError:
-        return Response("{}", status=200, mimetype="application/json")
+        with open(abs_path) as f:
+            data = json.load(f)
+        data["_path"] = abs_path
+        data["_exists"] = True
+        return Response(json.dumps(data), status=200, mimetype="application/json")
+    except (OSError, json.JSONDecodeError) as e:
+        return Response(
+            json.dumps({"_path": abs_path, "_exists": True, "_error": str(e)}),
+            status=200, mimetype="application/json",
+        )
+
+
+@app.route("/api/debug")
+def api_debug():
+    abs_path = os.path.abspath(LIVE_STATE_PATH)
+    exists = os.path.exists(abs_path)
+    info = {
+        "live_state_path": abs_path,
+        "file_exists": exists,
+        "cwd": os.getcwd(),
+    }
+    if exists:
+        info["mtime"] = os.path.getmtime(abs_path)
+        info["size_bytes"] = os.path.getsize(abs_path)
+    return Response(json.dumps(info, indent=2), status=200, mimetype="application/json")
 
 
 @app.route("/live")
@@ -211,6 +247,15 @@ def stats():
 
 
 if __name__ == "__main__":
+    data_dir = "data"
+    for i, arg in enumerate(sys.argv[1:], 1):
+        if arg == "--data-dir" and i < len(sys.argv) - 1:
+            data_dir = sys.argv[i + 1]
+        elif arg.startswith("--data-dir="):
+            data_dir = arg.split("=", 1)[1]
+    LIVE_STATE_PATH = os.path.join(data_dir, "live_state.json")
+    print(f"Reading live state from: {os.path.abspath(LIVE_STATE_PATH)}")
     print("Live view:  http://localhost:5000/live")
     print("Stats view: http://localhost:5000/stats")
+    print("Debug info: http://localhost:5000/api/debug")
     app.run(host="0.0.0.0", port=5000, debug=False)

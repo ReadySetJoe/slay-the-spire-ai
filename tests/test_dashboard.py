@@ -18,7 +18,10 @@ def test_api_state_returns_empty_when_no_file(client):
     c, _ = client
     resp = c.get("/api/state")
     assert resp.status_code == 200
-    assert resp.get_json() == {}
+    data = resp.get_json()
+    assert data["_exists"] is False
+    assert "live" not in data
+    assert "stats" not in data
 
 
 def test_api_state_returns_file_contents(client):
