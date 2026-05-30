@@ -18,7 +18,7 @@ _STATS_HTML = """<!DOCTYPE html>
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 8px;
     padding: 16px 18px;
-    width: 260px;
+    width: 280px;
   }
   .title {
     color: #a29bfe;
@@ -33,6 +33,18 @@ _STATS_HTML = """<!DOCTYPE html>
   .val-green { color: #7bed9f; }
   .val-red { color: #ff4757; }
   .val-blue { color: #74b9ff; }
+  .divider { border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 12px 0; }
+  .deck-title { color: #a29bfe; font-weight: bold; font-size: 11px; letter-spacing: 0.05em; margin-bottom: 8px; }
+  .deck-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px 8px;
+    font-size: 11px;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+  .deck-entry { color: #c8c8d8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .deck-count { color: #a8a8b3; }
 </style>
 </head>
 <body>
@@ -47,6 +59,9 @@ _STATS_HTML = """<!DOCTYPE html>
       / <span class="val-red" id="losses">—</span>
     </div>
   </div>
+  <hr class="divider">
+  <div class="deck-title">DECK (<span id="deck-size">—</span>)</div>
+  <div class="deck-list" id="deck-list"></div>
 </div>
 <script>
 async function poll() {
@@ -61,6 +76,14 @@ async function poll() {
       s.avg_floor != null ? s.avg_floor.toFixed(1) : "—";
     document.getElementById("wins").textContent = s.wins ?? "—";
     document.getElementById("losses").textContent = s.losses ?? "—";
+
+    const deck = (data.live || {}).deck || [];
+    const total = deck.reduce((sum, e) => sum + e.count, 0);
+    document.getElementById("deck-size").textContent = total || "—";
+    const list = document.getElementById("deck-list");
+    list.innerHTML = deck.map(e =>
+      `<div class="deck-entry">${e.count > 1 ? '<span class="deck-count">' + e.count + '×</span> ' : ''}${e.name}</div>`
+    ).join("");
   } catch (e) {}
 }
 setInterval(poll, 2500);
