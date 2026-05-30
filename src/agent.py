@@ -3,7 +3,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from src.card_tier_list import pick_best_card
+from src.card_tier_list import get_card_tier, pick_best_card
 from src.game_state import GameState
 
 logger = logging.getLogger(__name__)
@@ -33,9 +33,15 @@ class SimpleAgent(Agent):
                       "Elixir", "Gambler's Brew", "Entropic Brew",
                       "Smoke Bomb", "Snecko Oil", "Block Potion"}
 
+    # Node symbol → priority rank (lower = more preferred)
+    # Two tables: one for when HP is low, one for when HP is healthy.
+    _MAP_PRIORITY_LOW_HP  = {"R": 0, "?": 1, "T": 2, "$": 3, "M": 4, "E": 5}
+    _MAP_PRIORITY_HIGH_HP = {"E": 0, "T": 1, "?": 2, "$": 3, "R": 4, "M": 5}
+
     def __init__(self, scorer=None):
         self.scorer = scorer
         self._run_picks: list[str] = []
+        self._last_shop_gold: int | None = None  # loop-guard for shop purchases
 
     def on_game_over(self, state: GameState):
         """Update card scores from this run's picks, then reset for next run."""
@@ -47,6 +53,7 @@ class SimpleAgent(Agent):
             )
             self.scorer.update_run(self._run_picks, quality)
         self._run_picks.clear()
+        self._last_shop_gold = None
 
     def act(self, state: GameState) -> str:
         if state.is_in_combat:
@@ -70,8 +77,11 @@ class SimpleAgent(Agent):
         if state.screen_type == "EVENT":
             return "CHOOSE 0"
 
-        if state.screen_type in ("SHOP_ROOM", "SHOP_SCREEN"):
+        if state.screen_type == "SHOP_ROOM":
             return "PROCEED"
+
+        if state.screen_type == "SHOP_SCREEN":
+            return self._handle_shop_screen(state)
 
         if state.screen_type in ("GRID", "HAND_SELECT"):
             if "CHOOSE" in state.available_commands:
@@ -205,4 +215,86 @@ class SimpleAgent(Agent):
         return "PROCEED"
 
     def _handle_map(self, state: GameState) -> str:
-        return "CHOOSE 0"
+        nodes = state.screen_state.get("next_nodes", []) if state.screen_state else []
+        if not nodes or "CHOOSE" not in state.available_commands:
+            return "CHOOSE 0"
+
+        hp_ratio = state.current_hp / max(state.max_hp, 1)
+        priorities = self._MAP_PRIORITY_LOW_HP if hp_ratio < 0.4 else self._MAP_PRIORITY_HIGH_HP
+
+        best_idx, best_rank = 0, float("inf")
+        for i, node in enumerate(nodes):
+            rank = priorities.get(node.get("symbol", "M"), 4)
+            if rank < best_rank:
+                best_rank, best_idx = rank, i
+
+        chosen = nodes[best_idx]
+        logger.info("MAP | hp=%.0f%% | options=%s | chose=%s",
+                    hp_ratio * 100,
+                    [n.get("symbol") for n in nodes],
+                    chosen.get("symbol"))
+        return f"CHOOSE {best_idx}"
+
+    def _handle_shop_screen(self, state: GameState) -> str:
+        ss = state.screen_state or {}
+        gold = state.gold
+        cards   = ss.get("cards",   [])
+        relics  = ss.get("relics",  [])
+        purge_cost      = ss.get("purge_cost",      9999)
+        purge_available = ss.get("purge_available", False)
+
+        logger.info(
+            "SHOP | gold=%d | cards=%s | relics=%s | purge_cost=%s | purge_avail=%s | commands=%s",
+            gold,
+            [(c.get("id"), c.get("price")) for c in cards],
+            [(r.get("id"), r.get("price")) for r in relics],
+            purge_cost, purge_available,
+            state.available_commands,
+        )
+
+        # Loop-guard: if gold didn't decrease since our last purchase attempt,
+        # the command had no effect — leave rather than spinning.
+        if self._last_shop_gold is not None and gold >= self._last_shop_gold:
+            logger.warning("Shop purchase had no effect (gold %d >= %d), leaving shop.",
+                           gold, self._last_shop_gold)
+            self._last_shop_gold = None
+            return "PROCEED"
+        self._last_shop_gold = None
+
+        BUFFER = 50  # always keep this much gold in reserve
+
+        # Priority 1: remove a D-tier card (CommunicationMod exposes "PURGE" command)
+        if purge_available and "PURGE" in state.available_commands:
+            d_cards = [c for c in state.deck
+                       if get_card_tier(c.get("id", "")) == "D"]
+            if d_cards and gold >= purge_cost + BUFFER:
+                logger.info("SHOP | removing D-tier card, cost=%d", purge_cost)
+                self._last_shop_gold = gold
+                return "PURGE"
+
+        # Priority 2: buy the best S/A-tier card we can afford
+        # CommunicationMod indexes shop cards 0-based in the cards list.
+        for i, card in enumerate(cards):
+            if not card.get("is_in_stock", True):
+                continue
+            price = card.get("price", 9999)
+            tier  = get_card_tier(card.get("id", ""))
+            if tier in ("S", "A") and gold >= price + BUFFER:
+                logger.info("SHOP | buying %s (tier=%s, price=%d)", card.get("id"), tier, price)
+                self._last_shop_gold = gold
+                return f"CHOOSE {i}"
+
+        # Priority 3: buy a relic (assumed to appear after cards in the flat index)
+        for i, relic in enumerate(relics):
+            if not relic.get("is_in_stock", True):
+                continue
+            price = relic.get("price", 9999)
+            if gold >= price + BUFFER:
+                flat_idx = len(cards) + i
+                logger.info("SHOP | buying relic %s (price=%d, idx=%d)",
+                            relic.get("id"), price, flat_idx)
+                self._last_shop_gold = gold
+                return f"CHOOSE {flat_idx}"
+
+        self._last_shop_gold = None
+        return "PROCEED"
