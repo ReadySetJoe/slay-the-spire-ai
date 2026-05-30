@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 from datetime import datetime, timezone
 
 from src.game_state import GameState
@@ -52,15 +53,23 @@ class LiveStateWriter:
         card_name = ""
         if 0 <= card_idx < len(state.hand):
             card_name = state.hand[card_idx].get("name") or state.hand[card_idx].get("id", "")
-        if target_idx is not None and 0 <= target_idx < len(state.monsters):
-            monster_name = state.monsters[target_idx].get("name", "Enemy")
+        if target_idx is not None:
+            monster_name = (
+                state.monsters[target_idx].get("name", "Enemy")
+                if 0 <= target_idx < len(state.monsters)
+                else "Unknown"
+            )
             return f"{action} ({card_name} → {monster_name})"
         if card_name:
             return f"{action} ({card_name})"
         return action
 
     def _update(self, key: str, value: dict) -> None:
-        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+        try:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+        except OSError as e:
+            logger.error("Failed to create live state directory: %s", e)
+            return
         existing = {}
         if os.path.exists(self.path):
             try:
@@ -69,8 +78,10 @@ class LiveStateWriter:
             except (json.JSONDecodeError, OSError):
                 pass
         existing[key] = value
+        tmp = self.path + ".tmp"
         try:
-            with open(self.path, "w") as f:
+            with open(tmp, "w") as f:
                 json.dump(existing, f, indent=2)
+            os.replace(tmp, self.path)
         except OSError as e:
             logger.error("Failed to write live state: %s", e)
