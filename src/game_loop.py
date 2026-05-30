@@ -10,10 +10,12 @@ logger = logging.getLogger(__name__)
 
 class GameLoop:
     def __init__(self, communicator: Communicator, agent: Agent,
-                 run_tracker: RunTracker | None = None):
+                 run_tracker: RunTracker | None = None,
+                 live_state_writer=None):
         self.communicator = communicator
         self.agent = agent
         self.run_tracker = run_tracker or RunTracker()
+        self.live_state_writer = live_state_writer
         self._ready_sent = False
 
     def step(self):
@@ -54,6 +56,8 @@ class GameLoop:
             return True
 
         action = self.agent.act(state)
+        if self.live_state_writer:
+            self.live_state_writer.write(state, action)
         logger.info("Floor %d | HP %d/%d | Screen: %s | Action: %s",
                     state.floor, state.current_hp, state.max_hp, state.screen_type, action)
         self.communicator.send_command(action)
@@ -97,6 +101,8 @@ class GameLoop:
 
             logger.debug("Screen: %s | Commands: %s", state.screen_type, state.available_commands)
             action = self.agent.act(state)
+            if self.live_state_writer:
+                self.live_state_writer.write(state, action)
             logger.info("Floor %d | HP %d/%d | Screen: %s | Action: %s",
                         state.floor, state.current_hp, state.max_hp, state.screen_type, action)
             self.communicator.send_command(action)

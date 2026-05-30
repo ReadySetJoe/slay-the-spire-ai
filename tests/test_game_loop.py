@@ -128,3 +128,24 @@ def test_game_loop_auto_starts_new_run():
         loop.step()
         output_lines = out.getvalue().strip().split("\n")
         assert output_lines[-1] == "START IRONCLAD 0"
+
+
+def test_game_loop_calls_live_state_writer():
+    """GameLoop should call writer.write() with state and action after each agent act."""
+    import tempfile, os, json
+    from src.live_state import LiveStateWriter
+
+    inp = io.StringIO(make_state() + "\n")
+    out = io.StringIO()
+    comm = Communicator(input_stream=inp, output_stream=out)
+    agent = SimpleAgent()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = os.path.join(tmpdir, "live_state.json")
+        writer = LiveStateWriter(path=path)
+        loop = GameLoop(comm, agent, live_state_writer=writer)
+        loop.step()
+        assert os.path.exists(path)
+        with open(path) as f:
+            data = json.load(f)
+        assert "live" in data
+        assert data["live"]["last_action"].startswith("PLAY")
