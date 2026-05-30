@@ -120,8 +120,7 @@ def main():
         from src.game_loop import GameLoop
 
         agent = SimpleAgent(scorer=scorer)
-        loop = GameLoop(communicator, agent, run_tracker=tracker,
-                        live_state_writer=live_writer)
+        loop = GameLoop(communicator, agent, run_tracker=tracker)
         loop.run()
 
 
