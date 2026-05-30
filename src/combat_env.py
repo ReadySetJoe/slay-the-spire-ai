@@ -45,6 +45,11 @@ class CombatEnv(gym.Env):
         self._buffered_state: Optional[GameState] = None
         self._initialized: bool = False
 
+    def _write_live(self, state: GameState, action: str) -> None:
+        writer = self.run_tracker.live_state_writer
+        if writer:
+            writer.write(state, action)
+
     def action_masks(self) -> np.ndarray:
         if self._current_state is None:
             return np.ones(ActionSpace.TOTAL_ACTIONS, dtype=np.bool_)
@@ -77,6 +82,7 @@ class CombatEnv(gym.Env):
             logger.info("Floor %d | HP %d/%d | Potion: %s",
                         self._current_state.floor, self._current_state.current_hp,
                         self._current_state.max_hp, potion_cmd)
+            self._write_live(self._current_state, potion_cmd)
             self.communicator.send_command(potion_cmd)
             state = self.communicator.receive_state()
             if state is None:
@@ -129,6 +135,7 @@ class CombatEnv(gym.Env):
         logger.debug("Floor %d | HP %d/%d | action=%s",
                      self._current_state.floor, self._current_state.current_hp,
                      self._current_state.max_hp, command)
+        self._write_live(self._current_state, command)
         self.communicator.send_command(command)
 
         state = self.communicator.receive_state()
@@ -227,5 +234,6 @@ class CombatEnv(gym.Env):
             logger.info("Floor %d | HP %d/%d | Screen: %s | Action: %s",
                         state.floor, state.current_hp, state.max_hp,
                         state.screen_type, action)
+            self._write_live(state, action)
             self.communicator.send_command(action)
             state = None
