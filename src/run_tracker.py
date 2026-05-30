@@ -39,6 +39,7 @@ class RunTracker:
 
         self.runs.append(record)
         self._write_record(record)
+        self._update_graphs()
 
         logger.info(
             "Run #%d complete: %s | Floor %d | HP %d/%d | Deck %d | Relics %d",
@@ -53,6 +54,15 @@ class RunTracker:
         os.makedirs(os.path.dirname(self.log_path) or ".", exist_ok=True)
         with open(self.log_path, "a") as f:
             f.write(json.dumps(record) + "\n")
+
+    def _update_graphs(self):
+        from src.grapher import generate_graphs
+        data_dir = os.path.dirname(self.log_path) or "."
+        generate_graphs(
+            log_path=self.log_path,
+            scores_path=os.path.join(data_dir, "card_scores.json"),
+            output_dir=os.path.join(data_dir, "graphs"),
+        )
 
     def summary(self) -> dict:
         wins = sum(1 for r in self.runs if r["result"] == "win")

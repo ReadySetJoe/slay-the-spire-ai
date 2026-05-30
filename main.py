@@ -62,15 +62,6 @@ def _load_model(model_path: str, checkpoint_dir: str, env):
     return None
 
 
-def _save_graphs():
-    from src.grapher import generate_graphs
-    generate_graphs(
-        log_path="data/run_log.jsonl",
-        scores_path="data/card_scores.json",
-        output_dir="data/graphs",
-    )
-
-
 def main():
     use_rl = "--rl" in sys.argv
 
@@ -121,7 +112,6 @@ def main():
         finally:
             model.save(model_path)
             logger.info("Model saved to %s", model_path)
-            _save_graphs()
     else:
         from src.agent import SimpleAgent
         from src.game_loop import GameLoop
@@ -129,7 +119,6 @@ def main():
         agent = SimpleAgent(scorer=scorer)
         loop = GameLoop(communicator, agent, run_tracker=tracker)
         loop.run()
-        _save_graphs()
 
 
 if __name__ == "__main__":
