@@ -1,6 +1,8 @@
 # main.py
+import glob
 import logging
 import os
+import re
 import sys
 
 from src.communicator import Communicator
@@ -15,11 +17,68 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _latest_checkpoint(checkpoint_dir: str) -> "tuple[str, int] | None":
+    """Return (path, step_count) of the highest-step checkpoint file, or None."""
+    files = glob.glob(os.path.join(checkpoint_dir, "combat_*_steps.zip"))
+    best_path, best_steps = None, -1
+    for f in files:
+        m = re.search(r"combat_(\d+)_steps\.zip$", f)
+        if m:
+            steps = int(m.group(1))
+            if steps > best_steps:
+                best_steps, best_path = steps, f
+    return (best_path, best_steps) if best_path else None
+
+
+def _load_model(model_path: str, checkpoint_dir: str, env):
+    """Load the most recent model: prefers whichever of the final save or
+    latest checkpoint has the newer modification time."""
+    from sb3_contrib import MaskablePPO
+
+    latest = _latest_checkpoint(checkpoint_dir)
+    has_final = os.path.exists(model_path)
+
+    if latest and has_final:
+        ckpt_path, ckpt_steps = latest
+        if os.path.getmtime(ckpt_path) > os.path.getmtime(model_path):
+            model = MaskablePPO.load(ckpt_path, env=env)
+            logger.info("Resumed from checkpoint %s (%d steps)", ckpt_path, ckpt_steps)
+        else:
+            model = MaskablePPO.load(model_path, env=env)
+            logger.info("Loaded final model from %s", model_path)
+        return model
+
+    if latest:
+        ckpt_path, ckpt_steps = latest
+        model = MaskablePPO.load(ckpt_path, env=env)
+        logger.info("Resumed from checkpoint %s (%d steps)", ckpt_path, ckpt_steps)
+        return model
+
+    if has_final:
+        model = MaskablePPO.load(model_path, env=env)
+        logger.info("Loaded final model from %s", model_path)
+        return model
+
+    return None
+
+
+def _save_graphs():
+    from src.grapher import generate_graphs
+    generate_graphs(
+        log_path="data/run_log.jsonl",
+        scores_path="data/card_scores.json",
+        output_dir="data/graphs",
+    )
+
+
 def main():
     use_rl = "--rl" in sys.argv
 
     communicator = Communicator()
     tracker = RunTracker(log_path="data/run_log.jsonl")
+
+    from src.card_scorer import CardScorer
+    scorer = CardScorer(path="data/card_scores.json")
 
     if use_rl:
         from sb3_contrib import MaskablePPO
@@ -27,13 +86,13 @@ def main():
         from src.combat_env import CombatEnv
         from src.callbacks import EpisodeLoggerCallback
 
-        env = CombatEnv(communicator=communicator, run_tracker=tracker)
+        env = CombatEnv(communicator=communicator, run_tracker=tracker, scorer=scorer)
         model_path = "data/combat_model.zip"
+        checkpoint_dir = "data/checkpoints"
+        os.makedirs(checkpoint_dir, exist_ok=True)
 
-        if os.path.exists(model_path):
-            model = MaskablePPO.load(model_path, env=env)
-            logger.info("Loaded existing model from %s", model_path)
-        else:
+        model = _load_model(model_path, checkpoint_dir, env)
+        if model is None:
             model = MaskablePPO(
                 "MlpPolicy", env,
                 learning_rate=3e-4,
@@ -43,8 +102,6 @@ def main():
                 verbose=1,
             )
             logger.info("Created new MaskablePPO model")
-
-        os.makedirs("data/checkpoints", exist_ok=True)
         callbacks = CallbackList([
             EpisodeLoggerCallback(summary_freq=100),
             CheckpointCallback(
@@ -56,16 +113,23 @@ def main():
         ])
 
         logger.info("Starting RL training (MaskablePPO)...")
-        model.learn(total_timesteps=10_000_000, callback=callbacks)
-        model.save(model_path)
-        logger.info("Training complete. Final model saved to %s", model_path)
+        try:
+            model.learn(total_timesteps=10_000_000, callback=callbacks)
+            logger.info("Training complete.")
+        except KeyboardInterrupt:
+            logger.info("Training interrupted by user.")
+        finally:
+            model.save(model_path)
+            logger.info("Model saved to %s", model_path)
+            _save_graphs()
     else:
         from src.agent import SimpleAgent
         from src.game_loop import GameLoop
 
-        agent = SimpleAgent()
+        agent = SimpleAgent(scorer=scorer)
         loop = GameLoop(communicator, agent, run_tracker=tracker)
         loop.run()
+        _save_graphs()
 
 
 if __name__ == "__main__":

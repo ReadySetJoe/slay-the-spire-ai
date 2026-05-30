@@ -24,11 +24,12 @@ class CombatEnv(gym.Env):
     metadata = {"render_modes": []}
 
     def __init__(self, communicator: Communicator,
-                 run_tracker: Optional[RunTracker] = None):
+                 run_tracker: Optional[RunTracker] = None,
+                 scorer=None):
         super().__init__()
         self.communicator = communicator
         self.run_tracker = run_tracker or RunTracker()
-        self.simple_agent = SimpleAgent()
+        self.simple_agent = SimpleAgent(scorer=scorer)
         self.encoder = StateEncoder()
         self._action_space = ActionSpace()
 
@@ -63,9 +64,66 @@ class CombatEnv(gym.Env):
                      state.floor, state.current_hp, state.max_hp)
         return self.encoder.encode(state), {}
 
+    def _apply_potions(self) -> "tuple | None":
+        """Send SimpleAgent potion commands before the RL agent acts.
+
+        Returns an early-termination step tuple if combat ends during potion
+        use (extremely rare), otherwise None.
+        """
+        while "POTION" in self._current_state.available_commands:
+            potion_cmd = self.simple_agent._check_potions(self._current_state)
+            if not potion_cmd:
+                break
+            logger.info("Floor %d | HP %d/%d | Potion: %s",
+                        self._current_state.floor, self._current_state.current_hp,
+                        self._current_state.max_hp, potion_cmd)
+            self.communicator.send_command(potion_cmd)
+            state = self.communicator.receive_state()
+            if state is None:
+                obs = self.encoder.encode(self._current_state)
+                return obs, 0.0, True, False, {}
+            if not state.is_in_combat:
+                reward = self._compute_reward(state)
+                obs = self.encoder.encode(self._current_state)
+                self._current_state = None
+                self._buffered_state = state
+                return obs, reward, True, False, {}
+            self._current_state = state
+        return None
+
+    def _compute_step_reward(self, prev_hp: int, prev_monster_hp: int,
+                              prev_living: int, max_hp: int,
+                              state: GameState) -> float:
+        new_hp = state.current_hp
+        new_monster_hp = sum(
+            m.get("current_hp", 0) for m in state.monsters
+            if not m.get("is_gone", False)
+        )
+        new_living = sum(1 for m in state.monsters if not m.get("is_gone", False))
+
+        damage_dealt = max(prev_monster_hp - new_monster_hp, 0) / max(max_hp, 1)
+        damage_taken = max(prev_hp - new_hp, 0) / max(max_hp, 1)
+        kills = max(prev_living - new_living, 0)
+        return damage_dealt - damage_taken + 0.1 * kills
+
     def step(self, action: int):
         assert self._current_state is not None, "Call reset() first"
         self._episode_steps += 1
+
+        early = self._apply_potions()
+        if early is not None:
+            return early
+
+        # Snapshot before-action values for per-step reward shaping.
+        prev_hp = self._current_state.current_hp
+        prev_monster_hp = sum(
+            m.get("current_hp", 0) for m in self._current_state.monsters
+            if not m.get("is_gone", False)
+        )
+        prev_living = sum(
+            1 for m in self._current_state.monsters if not m.get("is_gone", False)
+        )
+        max_hp = self._current_state.max_hp
 
         command = self._action_space.action_to_command(action, self._current_state)
         logger.debug("Floor %d | HP %d/%d | action=%s",
@@ -80,8 +138,11 @@ class CombatEnv(gym.Env):
             return obs, 0.0, True, False, {}
 
         if state.is_in_combat:
+            step_reward = self._compute_step_reward(
+                prev_hp, prev_monster_hp, prev_living, max_hp, state
+            )
             self._current_state = state
-            return self.encoder.encode(state), 0.0, False, False, {}
+            return self.encoder.encode(state), step_reward, False, False, {}
 
         # Combat ended — compute reward from post-combat state
         reward = self._compute_reward(state)
@@ -100,6 +161,7 @@ class CombatEnv(gym.Env):
         # _advance_to_combat() also handles GAME_OVER but only for deaths between episodes.
         if state.screen_type == "GAME_OVER":
             self.run_tracker.record_run(state)
+            self.simple_agent.on_game_over(state)
             summary = self.run_tracker.summary()
             logger.info(
                 "GAME_OVER | floor=%d | runs=%d | win_rate=%.1f%%",
@@ -148,6 +210,7 @@ class CombatEnv(gym.Env):
 
             if state.screen_type == "GAME_OVER":
                 self.run_tracker.record_run(state)
+                self.simple_agent.on_game_over(state)
                 summary = self.run_tracker.summary()
                 logger.info(
                     "GAME_OVER (between combats) | runs=%d | win_rate=%.1f%%",

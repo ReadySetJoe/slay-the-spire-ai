@@ -1,6 +1,7 @@
 # src/agent.py
 import logging
 from abc import ABC, abstractmethod
+from typing import Optional
 
 from src.card_tier_list import pick_best_card
 from src.game_state import GameState
@@ -32,6 +33,21 @@ class SimpleAgent(Agent):
                       "Elixir", "Gambler's Brew", "Entropic Brew",
                       "Smoke Bomb", "Snecko Oil", "Block Potion"}
 
+    def __init__(self, scorer=None):
+        self.scorer = scorer
+        self._run_picks: list[str] = []
+
+    def on_game_over(self, state: GameState):
+        """Update card scores from this run's picks, then reset for next run."""
+        if self.scorer and self._run_picks:
+            quality = (state.current_hp / max(state.max_hp, 1)) * (state.floor / 55)
+            logger.info(
+                "Run quality=%.3f | %d cards picked: %s",
+                quality, len(self._run_picks), self._run_picks,
+            )
+            self.scorer.update_run(self._run_picks, quality)
+        self._run_picks.clear()
+
     def act(self, state: GameState) -> str:
         if state.is_in_combat:
             return self._handle_combat(state)
@@ -45,6 +61,12 @@ class SimpleAgent(Agent):
         if state.screen_type == "MAP":
             return self._handle_map(state)
 
+        if state.screen_type == "CHEST":
+            if "OPEN" in state.available_commands:
+                return "OPEN"
+            if "PROCEED" in state.available_commands:
+                return "PROCEED"
+
         if state.screen_type == "EVENT":
             return "CHOOSE 0"
 
@@ -53,7 +75,9 @@ class SimpleAgent(Agent):
 
         if state.screen_type in ("GRID", "HAND_SELECT"):
             if "CHOOSE" in state.available_commands:
-                return "CHOOSE 0"
+                cards = state.screen_state.get("cards", []) if state.screen_state else []
+                best = pick_best_card(cards) if cards else None
+                return f"CHOOSE {best if best is not None else 0}"
             if "CONFIRM" in state.available_commands:
                 return "CONFIRM"
             return "CANCEL"
@@ -139,13 +163,17 @@ class SimpleAgent(Agent):
     def _handle_card_reward(self, state: GameState) -> str:
         if "CHOOSE" not in state.available_commands:
             return "PROCEED"
-        cards = []
-        if state.screen_state:
-            cards = state.screen_state.get("cards", [])
-        best = pick_best_card(cards)
-        if best is not None:
-            return f"CHOOSE {best}"
-        return "PROCEED"
+        cards = state.screen_state.get("cards", []) if state.screen_state else []
+        if not cards:
+            return "PROCEED"
+
+        if self.scorer:
+            idx = self.scorer.softmax_pick(cards)
+        else:
+            idx = pick_best_card(cards) or 0
+
+        self._run_picks.append(cards[idx].get("id", ""))
+        return f"CHOOSE {idx}"
 
     def _handle_rest(self, state: GameState) -> str:
         if "CHOOSE" not in state.available_commands:
