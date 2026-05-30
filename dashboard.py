@@ -246,13 +246,23 @@ def stats():
     return Response(_STATS_HTML, status=200, mimetype="text/html")
 
 
+_GAME_DATA_DIR = r"C:\Program Files (x86)\Steam\steamapps\common\SlayTheSpire\data"
+
 if __name__ == "__main__":
-    data_dir = "data"
+    data_dir = None
     for i, arg in enumerate(sys.argv[1:], 1):
         if arg == "--data-dir" and i < len(sys.argv) - 1:
             data_dir = sys.argv[i + 1]
         elif arg.startswith("--data-dir="):
             data_dir = arg.split("=", 1)[1]
+
+    if data_dir is None:
+        # Auto-detect: prefer the game install directory, fall back to local
+        if os.path.isdir(_GAME_DATA_DIR):
+            data_dir = _GAME_DATA_DIR
+        else:
+            data_dir = "data"
+
     LIVE_STATE_PATH = os.path.join(data_dir, "live_state.json")
     print(f"Reading live state from: {os.path.abspath(LIVE_STATE_PATH)}")
     print("Live view:  http://localhost:5000/live")
