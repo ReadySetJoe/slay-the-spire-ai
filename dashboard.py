@@ -45,6 +45,7 @@ _STATS_HTML = """<!DOCTYPE html>
   }
   .deck-entry { color: #c8c8d8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .deck-count { color: #a8a8b3; }
+  .debug { margin-top: 10px; font-size: 10px; color: #666; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -62,6 +63,7 @@ _STATS_HTML = """<!DOCTYPE html>
   <hr class="divider">
   <div class="deck-title">DECK (<span id="deck-size">—</span>)</div>
   <div class="deck-list" id="deck-list"></div>
+  <div class="debug" id="debug-info"></div>
 </div>
 <script>
 async function poll() {
@@ -77,14 +79,22 @@ async function poll() {
     document.getElementById("wins").textContent = s.wins ?? "—";
     document.getElementById("losses").textContent = s.losses ?? "—";
 
-    const deck = (data.live || {}).deck || [];
+    const live = data.live || null;
+    const deck = (live || {}).deck || [];
     const total = deck.reduce((sum, e) => sum + e.count, 0);
     document.getElementById("deck-size").textContent = total || "—";
     const list = document.getElementById("deck-list");
     list.innerHTML = deck.map(e =>
       `<div class="deck-entry">${e.count > 1 ? '<span class="deck-count">' + e.count + '×</span> ' : ''}${e.name}</div>`
     ).join("");
-  } catch (e) {}
+
+    const dbg = document.getElementById("debug-info");
+    dbg.textContent = live
+      ? `live.deck: ${deck.length} entries | screen: ${live.screen_type || "?"}`
+      : `no 'live' key in JSON (keys: ${Object.keys(data).join(", ")})`;
+  } catch (e) {
+    document.getElementById("debug-info").textContent = "fetch error: " + e;
+  }
 }
 setInterval(poll, 2500);
 poll();

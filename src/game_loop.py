@@ -99,4 +99,6 @@ class GameLoop:
             action = self.agent.act(state)
             logger.info("Floor %d | HP %d/%d | Screen: %s | Action: %s",
                         state.floor, state.current_hp, state.max_hp, state.screen_type, action)
+            if self.run_tracker.live_state_writer:
+                self.run_tracker.live_state_writer.write(state, action)
             self.communicator.send_command(action)
