@@ -9,8 +9,9 @@ logger = logging.getLogger(__name__)
 
 
 class RunTracker:
-    def __init__(self, log_path: str = "data/run_log.jsonl"):
+    def __init__(self, log_path: str = "data/run_log.jsonl", live_state_writer=None):
         self.log_path = log_path
+        self.live_state_writer = live_state_writer
         self.run_number = 0
         self.runs: list[dict] = []
 
@@ -40,6 +41,8 @@ class RunTracker:
         self.runs.append(record)
         self._write_record(record)
         self._update_graphs()
+        if self.live_state_writer:
+            self.live_state_writer.write_run_summary(self.summary())
 
         logger.info(
             "Run #%d complete: %s | Floor %d | HP %d/%d | Deck %d | Relics %d",

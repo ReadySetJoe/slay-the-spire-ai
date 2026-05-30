@@ -109,3 +109,23 @@ def test_summary():
     assert summary["wins"] == 1
     assert summary["losses"] == 2
     assert summary["win_rate"] == 1 / 3
+
+
+def test_run_tracker_calls_live_state_writer():
+    """RunTracker should call writer.write_run_summary() after each run."""
+    import tempfile, os, json
+    from src.live_state import LiveStateWriter
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        log_path = os.path.join(tmpdir, "run_log.jsonl")
+        live_path = os.path.join(tmpdir, "live_state.json")
+        writer = LiveStateWriter(path=live_path)
+        tracker = RunTracker(log_path=log_path, live_state_writer=writer)
+        state = GameState.from_json(SAMPLE_GAME_OVER_WIN)
+        tracker.record_run(state)
+        assert os.path.exists(live_path)
+        with open(live_path) as f:
+            data = json.load(f)
+        assert data["stats"]["run_number"] == 1
+        assert data["stats"]["wins"] == 1
+        assert data["stats"]["losses"] == 0
