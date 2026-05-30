@@ -1,5 +1,6 @@
 # src/agent.py
 import logging
+import random
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -75,7 +76,7 @@ class SimpleAgent(Agent):
                 return "PROCEED"
 
         if state.screen_type == "EVENT":
-            return "CHOOSE 0"
+            return self._handle_event(state)
 
         if state.screen_type == "SHOP_ROOM":
             return "PROCEED"
@@ -213,6 +214,16 @@ class SimpleAgent(Agent):
             return f"CHOOSE {i}"
 
         return "PROCEED"
+
+    def _handle_event(self, state: GameState) -> str:
+        ss = state.screen_state or {}
+        name = ss.get("event_name") or ss.get("name") or "unknown"
+        options = ss.get("options", [])
+        n_options = len(options) if options else 2  # safe fallback
+        choice = random.randrange(n_options)
+        logger.info("EVENT | %s | %d options | chose %d | full_state=%s",
+                    name, n_options, choice, ss)
+        return f"CHOOSE {choice}"
 
     def _handle_map(self, state: GameState) -> str:
         nodes = state.screen_state.get("next_nodes", []) if state.screen_state else []
