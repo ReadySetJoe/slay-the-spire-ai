@@ -5,15 +5,19 @@ from stable_baselines3.common.callbacks import BaseCallback
 
 logger = logging.getLogger(__name__)
 
+_TRAINING_WINDOW = 500
+
 
 class EpisodeLoggerCallback(BaseCallback):
     """Logs per-episode stats and periodic summaries to the game log."""
 
-    def __init__(self, summary_freq: int = 100):
+    def __init__(self, summary_freq: int = 100, live_state_writer=None):
         super().__init__(verbose=0)
         self.summary_freq = summary_freq
+        self.live_state_writer = live_state_writer
         self._episode_count = 0
         self._episode_stats: deque = deque(maxlen=self.summary_freq)
+        self._training_episodes: deque = deque(maxlen=_TRAINING_WINDOW)
 
     def _on_step(self) -> bool:
         dones = self.locals.get("dones", [])
@@ -26,6 +30,17 @@ class EpisodeLoggerCallback(BaseCallback):
     def _log_episode(self, ep: dict):
         self._episode_count += 1
         self._episode_stats.append(ep)
+        self._training_episodes.append({
+            "ep": self._episode_count,
+            "reward": ep["r"],
+            "steps": ep["l"],
+        })
+        if self.live_state_writer is not None:
+            self.live_state_writer.write_training_step(
+                episodes=list(self._training_episodes),
+                total_episodes=self._episode_count,
+                total_timesteps=self.num_timesteps,
+            )
         logger.info(
             "[Episode %d] reward=%.2f | steps=%d | hp=%d/%d | floor=%d | total_steps=%d",
             self._episode_count, ep["r"], ep["l"],
