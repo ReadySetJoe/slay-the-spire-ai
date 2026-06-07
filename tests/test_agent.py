@@ -403,12 +403,13 @@ def _hand_select(cards, selected=None, commands=("CHOOSE", "CANCEL")):
 
 
 def test_grid_excludes_already_selected_card():
-    """Agent must not re-pick a card already in selected_cards (avoids deselect oscillation)."""
+    """Agent picks the best unselected card, not the already-selected one."""
     state = _grid(cards=[_STRIKE, _DEFEND, _BASH], selected_cards=[_STRIKE])
     agent = SimpleAgent()
     action = agent.act(state)
-    # Strike (uuid u1) is in selected_cards — must not choose index 0
-    assert action != "CHOOSE 0"
+    # Strike (u1) excluded; remaining: Defend (D-tier, idx 1) and Bash (C-tier, idx 2).
+    # pick_best_card chooses Bash as the higher tier → CHOOSE 2.
+    assert action == "CHOOSE 2"
 
 
 def test_hand_select_excludes_already_selected_card():
