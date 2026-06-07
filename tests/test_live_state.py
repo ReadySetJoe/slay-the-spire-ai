@@ -151,3 +151,35 @@ def test_write_run_summary_preserves_live_section():
         with open(path) as f:
             data = json.load(f)
         assert data["live"]["screen_type"] == "COMBAT"
+
+
+def test_write_training_step_creates_training_section():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = os.path.join(tmpdir, "live_state.json")
+        writer = LiveStateWriter(path=path)
+        episodes = [
+            {"ep": 1, "reward": -2.0, "steps": 30},
+            {"ep": 2, "reward": 1.5, "steps": 45},
+        ]
+        writer.write_training_step(episodes, total_episodes=2, total_timesteps=75)
+        with open(path) as f:
+            data = json.load(f)
+        assert "training" in data
+        assert data["training"]["total_episodes"] == 2
+        assert data["training"]["total_timesteps"] == 75
+        assert data["training"]["episodes"] == episodes
+
+
+def test_write_training_step_preserves_other_sections():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = os.path.join(tmpdir, "live_state.json")
+        writer = LiveStateWriter(path=path)
+        existing = {"stats": {"run_number": 5, "wins": 2, "losses": 3,
+                              "win_rate": 0.4, "avg_floor": 12.0}}
+        with open(path, "w") as f:
+            json.dump(existing, f)
+        writer.write_training_step([], total_episodes=0, total_timesteps=0)
+        with open(path) as f:
+            data = json.load(f)
+        assert data["stats"]["run_number"] == 5
+        assert "training" in data

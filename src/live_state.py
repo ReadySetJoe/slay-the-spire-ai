@@ -45,6 +45,18 @@ class LiveStateWriter:
         }
         self._update("stats", stats)
 
+    def write_training_step(
+        self,
+        episodes: list[dict],
+        total_episodes: int,
+        total_timesteps: int,
+    ) -> None:
+        self._update("training", {
+            "total_episodes": total_episodes,
+            "total_timesteps": total_timesteps,
+            "episodes": episodes,
+        })
+
     def _deck_composition(self, state: GameState) -> list[dict]:
         names = []
         for c in state.deck:
