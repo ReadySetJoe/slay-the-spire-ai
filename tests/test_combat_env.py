@@ -218,12 +218,12 @@ def test_compute_step_reward_end_turn_no_energy_used():
 def test_compute_step_reward_card_play_no_energy_bonus():
     """Energy bonus is NOT applied on card play, only on END_TURN."""
     env = CombatEnv(communicator=MagicMock())
-    post_state = _combat_energy(energy=0, hp=70)
+    post_state = _combat_energy(energy=2, hp=70)
     # action=0 is a card-play action (not END_TURN_ACTION=60)
     reward = env._compute_step_reward(
         prev_hp=70, prev_monster_hp=42, prev_living=1,
         max_hp=80, state=post_state,
-        action=0, prev_energy=0,
+        action=0, prev_energy=1,
     )
     assert reward == pytest.approx(0.0)
 
