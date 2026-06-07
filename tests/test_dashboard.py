@@ -45,5 +45,5 @@ def test_training_route_returns_html(client):
     resp = c.get("/training")
     assert resp.status_code == 200
     assert b"text/html" in resp.content_type.encode()
-    assert b"TRAINING" in resp.data
+    assert b"FLOOR PROGRESS" in resp.data
     assert b"chart.js" in resp.data.lower()

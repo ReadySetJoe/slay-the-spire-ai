@@ -8,7 +8,7 @@ from typing import Optional
 from src.card_tier_list import get_card_tier, pick_best_card
 from src.game_state import GameState
 
-_FALLBACK_SEQUENCE = ("CONFIRM", "CANCEL", "PROCEED", "SKIP", "STATE")
+_FALLBACK_SEQUENCE = ("CONFIRM", "CANCEL", "PROCEED", "LEAVE", "SKIP", "STATE")
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +98,9 @@ class SimpleAgent(Agent):
         if "PROCEED" in state.available_commands:
             return "PROCEED"
 
+        if "LEAVE" in state.available_commands:
+            return "LEAVE"
+
         if "CHOOSE" in state.available_commands:
             return "CHOOSE 0"
 
@@ -185,8 +188,35 @@ class SimpleAgent(Agent):
     def _handle_rest(self, state: GameState) -> str:
         if "CHOOSE" not in state.available_commands:
             return "PROCEED"
-        # Rest if below 60% HP, otherwise smith
+
         hp_ratio = state.current_hp / max(state.max_hp, 1)
+
+        # Parse which options are actually enabled from screen_state.
+        # CommunicationMod may use "rest_options" or "options"; try both.
+        ss = state.screen_state or {}
+        raw = ss.get("rest_options") or ss.get("options", [])
+        available: set[str] = set()
+        for opt in raw:
+            if isinstance(opt, str):
+                available.add(opt.lower())
+            elif isinstance(opt, dict) and not opt.get("disabled", False):
+                oid = opt.get("id", "").lower()
+                if oid:
+                    available.add(oid)
+
+        priority = (
+            ("rest", "smith", "lift", "toke", "dig", "recall")
+            if hp_ratio < 0.6
+            else ("smith", "rest", "lift", "toke", "dig", "recall")
+        )
+
+        if available:
+            for option in priority:
+                if option in available:
+                    return f"CHOOSE {option}"
+            return f"CHOOSE {next(iter(available))}"
+
+        # No screen_state data — blind priority pick
         if hp_ratio < 0.6:
             return "CHOOSE rest"
         return "CHOOSE smith"
@@ -251,7 +281,13 @@ class SimpleAgent(Agent):
                 best_local = pick_best_card([c for _, c in unselected])
                 best_idx = unselected[best_local if best_local is not None else 0][0]
                 return f"CHOOSE {best_idx}"
-        return "CANCEL"
+            if "CANCEL" not in state.available_commands:
+                # UUID tracking found no candidates but game still wants a CHOOSE.
+                # (CANCEL unavailable means the game requires a selection.)
+                return "CHOOSE 0"
+        if "CANCEL" in state.available_commands:
+            return "CANCEL"
+        return "STATE"
 
     def _handle_map(self, state: GameState) -> str:
         nodes = state.screen_state.get("next_nodes", []) if state.screen_state else []
@@ -368,7 +404,11 @@ class StuckDetectorAgent(Agent):
         return getattr(self._agent, name)
 
     def act(self, state: GameState) -> str:
-        fp = (state.screen_type, frozenset(state.available_commands))
+        fp = (
+            state.screen_type,
+            frozenset(state.available_commands),
+            json.dumps(state.screen_state, sort_keys=True, default=str),
+        )
 
         if fp != self._last_fp:
             self._last_fp = fp

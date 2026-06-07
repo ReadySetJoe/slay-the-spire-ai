@@ -130,11 +130,56 @@ def test_card_reward_chooses_or_skips():
     assert action.startswith("CHOOSE") or action == "PROCEED"
 
 
+def _rest_state(options, hp=50, max_hp=80):
+    return GameState.from_json(json.dumps({
+        "available_commands": ["CHOOSE", "STATE"],
+        "ready_for_command": True, "in_game": True,
+        "game_state": {
+            "screen_type": "REST",
+            "screen_state": {"options": options},
+            "seed": 1, "floor": 6, "ascension_level": 0, "class": "IRONCLAD",
+            "current_hp": hp, "max_hp": max_hp, "gold": 99,
+            "deck": [], "relics": [], "potions": [], "map": [], "act": 1,
+            "combat_state": None,
+        },
+    }))
+
+
 def test_rest_site():
     state = GameState.from_json(REST_SITE_STATE)
     agent = SimpleAgent()
     action = agent.act(state)
     assert action.startswith("CHOOSE")
+
+
+def test_rest_prefers_rest_when_low_hp():
+    """Picks 'rest' over 'smith' when HP < 60%."""
+    state = _rest_state(options=["rest", "smith"], hp=40, max_hp=80)
+    assert SimpleAgent().act(state) == "CHOOSE rest"
+
+
+def test_rest_prefers_smith_when_healthy():
+    """Picks 'smith' over 'rest' when HP >= 60%."""
+    state = _rest_state(options=["rest", "smith"], hp=60, max_hp=80)
+    assert SimpleAgent().act(state) == "CHOOSE smith"
+
+
+def test_rest_coffee_dripper_skips_to_smith():
+    """With Coffee Dripper, 'rest' is absent from options — should pick 'smith'."""
+    state = _rest_state(options=["smith"], hp=20, max_hp=80)
+    assert SimpleAgent().act(state) == "CHOOSE smith"
+
+
+def test_rest_disabled_dict_format():
+    """Handles CommunicationMod dict format where disabled options are included but flagged."""
+    state = _rest_state(
+        options=[
+            {"id": "rest",  "disabled": True},
+            {"id": "smith", "disabled": False},
+        ],
+        hp=20, max_hp=80,
+    )
+    assert SimpleAgent().act(state) == "CHOOSE smith"
 
 
 def test_map_chooses_node():
@@ -438,6 +483,34 @@ def test_grid_cancel_when_all_selected_no_confirm():
     assert agent.act(state) == "CANCEL"
 
 
+def test_hand_select_choose_0_when_cancel_unavailable():
+    """When no unselected cards but CANCEL is not available, sends CHOOSE 0.
+
+    Reproduces the Elixir-potion HAND_SELECT bug: game requires a card pick
+    (CANCEL absent) but UUID tracking finds nothing to select. The agent must
+    not send CANCEL (invalid) and must not return STATE (game still wants CHOOSE).
+    """
+    # No CANCEL in commands — game requires a mandatory pick
+    state = _hand_select(
+        cards=[_STRIKE, _DEFEND],
+        selected=[],
+        commands=("CHOOSE", "POTION", "STATE"),
+    )
+    agent = SimpleAgent()
+    # No UUIDs appear in selected, so unselected == all cards.
+    # This test verifies the fallback when uuid tracking returns empty (cards=[]).
+    # Simulate by using a state where cards list is empty but CHOOSE is available.
+    empty_cards = _hand_select(cards=[], selected=[], commands=("CHOOSE", "STATE"))
+    assert agent.act(empty_cards) == "CHOOSE 0"
+
+
+def test_hand_select_state_when_no_choose_no_cancel():
+    """Returns STATE when neither CHOOSE nor CANCEL is available."""
+    state = _hand_select(cards=[], selected=[], commands=("STATE", "WAIT"))
+    agent = SimpleAgent()
+    assert agent.act(state) == "STATE"
+
+
 # ── StuckDetectorAgent tests ──────────────────────────────────────────────────
 
 import logging
@@ -607,6 +680,47 @@ def test_sda_resets_on_game_over():
     agent.act(state)   # seen=1, delegate
     agent.act(state)   # seen=2, still below threshold
     assert inner.act.call_count == 4  # 2 pre-stuck + 2 post-reset
+
+
+def test_sda_resets_when_screen_state_changes():
+    """Different screen_state on same screen_type/commands resets stuck counter.
+
+    Reproduces the Neow bug: [Talk] → 2-options → [Leave] all share the same
+    screen_type (EVENT) and available_commands, but have different options in
+    screen_state. With screen_state in the fingerprint, each stage is distinct
+    and CHOOSE 0 is delegated without false stuck detection firing.
+    """
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    commands = ["CHOOSE", "CLICK", "KEY", "STATE", "WAIT"]
+
+    def _neow_state(options):
+        return GameState.from_json(json.dumps({
+            "available_commands": commands,
+            "ready_for_command": True, "in_game": True,
+            "game_state": {
+                "screen_type": "EVENT",
+                "screen_state": {"event_name": "Neow", "options": options},
+                "seed": 1, "floor": 0, "ascension_level": 0, "class": "IRONCLAD",
+                "current_hp": 80, "max_hp": 80, "gold": 99,
+                "deck": [], "relics": [], "potions": [], "map": [], "act": 1,
+                "combat_state": None,
+            },
+        }))
+
+    talk   = _neow_state([{"choice_index": 0, "text": "[Talk]",  "disabled": False}])
+    opts   = _neow_state([{"choice_index": 0, "text": "[1 HP]",  "disabled": False},
+                          {"choice_index": 1, "text": "[+8 HP]", "disabled": False}])
+    leave  = _neow_state([{"choice_index": 0, "text": "[Leave]", "disabled": False}])
+
+    a1 = agent.act(talk)   # fp changes → delegate
+    a2 = agent.act(opts)   # fp changes → delegate
+    a3 = agent.act(leave)  # fp changes → delegate (NOT stuck)
+
+    assert a1 == a2 == a3 == "CHOOSE 0"
+    assert inner.act.call_count == 3
 
 
 def test_sda_delegates_on_game_over_to_wrapped_agent():
