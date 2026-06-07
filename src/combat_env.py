@@ -25,7 +25,8 @@ class CombatEnv(gym.Env):
 
     def __init__(self, communicator: Communicator,
                  run_tracker: Optional[RunTracker] = None,
-                 scorer=None):
+                 scorer=None,
+                 energy_efficiency_bonus: float = 0.1):
         super().__init__()
         self.communicator = communicator
         self.run_tracker = run_tracker or RunTracker()
@@ -44,6 +45,7 @@ class CombatEnv(gym.Env):
         self._episode_steps: int = 0
         self._buffered_state: Optional[GameState] = None
         self._initialized: bool = False
+        self._energy_efficiency_bonus = energy_efficiency_bonus
 
     def _write_live(self, state: GameState, action: str) -> None:
         writer = self.run_tracker.live_state_writer
@@ -99,7 +101,8 @@ class CombatEnv(gym.Env):
 
     def _compute_step_reward(self, prev_hp: int, prev_monster_hp: int,
                               prev_living: int, max_hp: int,
-                              state: GameState) -> float:
+                              state: GameState, action: int = 0,
+                              prev_energy: int = 0) -> float:
         new_hp = state.current_hp
         new_monster_hp = sum(
             m.get("current_hp", 0) for m in state.monsters
@@ -110,7 +113,10 @@ class CombatEnv(gym.Env):
         damage_dealt = max(prev_monster_hp - new_monster_hp, 0) / max(max_hp, 1)
         damage_taken = max(prev_hp - new_hp, 0) / max(max_hp, 1)
         kills = max(prev_living - new_living, 0)
-        return damage_dealt - damage_taken + 0.1 * kills
+        base = damage_dealt - damage_taken + 0.1 * kills
+        if action == ActionSpace.END_TURN_ACTION:
+            base += self._energy_efficiency_bonus * (1 - prev_energy / 3)
+        return base
 
     def step(self, action: int):
         assert self._current_state is not None, "Call reset() first"
@@ -130,6 +136,7 @@ class CombatEnv(gym.Env):
             1 for m in self._current_state.monsters if not m.get("is_gone", False)
         )
         max_hp = self._current_state.max_hp
+        prev_energy = self._current_state.energy
 
         command = self._action_space.action_to_command(action, self._current_state)
         logger.debug("Floor %d | HP %d/%d | action=%s",
@@ -146,7 +153,7 @@ class CombatEnv(gym.Env):
 
         if state.is_in_combat:
             step_reward = self._compute_step_reward(
-                prev_hp, prev_monster_hp, prev_living, max_hp, state
+                prev_hp, prev_monster_hp, prev_living, max_hp, state, action, prev_energy
             )
             self._current_state = state
             return self.encoder.encode(state), step_reward, False, False, {}
