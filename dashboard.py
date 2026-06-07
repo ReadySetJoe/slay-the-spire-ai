@@ -236,6 +236,14 @@ async function poll() {
     if (!t || !t.episodes || t.episodes.length === 0) {
       noData.style.display = "";
       canvas.style.display = "none";
+      document.getElementById("total-episodes").textContent = "—";
+      document.getElementById("total-timesteps").textContent = "—";
+      document.getElementById("avg-reward").textContent = "—";
+      document.getElementById("best-reward").textContent = "—";
+      if (chart) {
+        chart.destroy();
+        chart = null;
+      }
       return;
     }
     noData.style.display = "none";
