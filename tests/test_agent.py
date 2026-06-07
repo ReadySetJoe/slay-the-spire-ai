@@ -536,6 +536,21 @@ def test_sda_falls_back_to_state_when_cmd_unavailable():
     assert action == "STATE"
 
 
+def test_sda_scans_forward_when_scheduled_cmd_unavailable():
+    """When the scheduled fallback is unavailable, scans forward to the next available one."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    # CONFIRM unavailable, CANCEL available → should return CANCEL at stuck_step=0
+    state = _sda_state("MAP", ["CHOOSE", "CANCEL"])
+    agent.act(state)
+    agent.act(state)
+    action = agent.act(state)  # stuck_step=0: CONFIRM unavailable → scan → CANCEL
+
+    assert action == "CANCEL"
+
+
 def test_sda_resets_on_fingerprint_change():
     """Counter resets when a different screen/commands is seen."""
     inner = MagicMock()

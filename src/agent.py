@@ -348,9 +348,10 @@ class StuckDetectorAgent(Agent):
     delegating to the wrapped agent. A CRITICAL log with full screen_state
     is emitted so the stuck state can be diagnosed from the log alone.
 
-    Attribute access for unknown names falls through to the wrapped agent,
-    allowing callers to use agent-specific methods (e.g. _check_potions)
-    transparently.
+    Public attribute access falls through to the wrapped agent via __getattr__.
+    Private (_-prefixed) names raise AttributeError intentionally — this keeps
+    pickle/deepcopy safe. Callers needing private methods on the wrapped agent
+    (e.g. _check_potions) must hold a direct reference to it.
     """
 
     def __init__(self, agent: Agent, threshold: int = 3, log_interval: int = 10):
@@ -399,10 +400,13 @@ class StuckDetectorAgent(Agent):
                 json.dumps(state.screen_state, default=str),
             )
 
-        idx = min(stuck_step, len(_FALLBACK_SEQUENCE) - 1)
-        cmd = _FALLBACK_SEQUENCE[idx]
-        if cmd not in state.available_commands and cmd != "STATE":
-            cmd = "STATE"
+        start = min(stuck_step, len(_FALLBACK_SEQUENCE) - 1)
+        cmd = "STATE"
+        for i in range(start, len(_FALLBACK_SEQUENCE)):
+            candidate = _FALLBACK_SEQUENCE[i]
+            if candidate in state.available_commands or candidate == "STATE":
+                cmd = candidate
+                break
 
         self._action_history.append(cmd)
         return cmd
