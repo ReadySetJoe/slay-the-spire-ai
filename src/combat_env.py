@@ -32,6 +32,8 @@ class CombatEnv(gym.Env):
         super().__init__()
         self.communicator = communicator
         self.run_tracker = run_tracker or RunTracker()
+        # _inner_simple_agent: bare agent used for _check_potions (private method,
+        # blocked by StuckDetectorAgent.__getattr__'s underscore guard)
         self._inner_simple_agent = SimpleAgent(scorer=scorer)
         self.simple_agent = StuckDetectorAgent(self._inner_simple_agent)
         self.encoder = StateEncoder()

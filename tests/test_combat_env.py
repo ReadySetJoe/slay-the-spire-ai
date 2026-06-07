@@ -257,3 +257,12 @@ def test_combat_env_wraps_simple_agent_with_stuck_detector():
     from src.agent import StuckDetectorAgent
     env = CombatEnv(communicator=MagicMock())
     assert isinstance(env.simple_agent, StuckDetectorAgent)
+
+
+def test_combat_env_inner_agent_used_for_check_potions():
+    """_inner_simple_agent is the unwrapped SimpleAgent that _apply_potions calls."""
+    from src.agent import SimpleAgent
+    env = CombatEnv(communicator=MagicMock())
+    # _inner_simple_agent must be the unwrapped SimpleAgent stored inside the wrapper
+    assert isinstance(env._inner_simple_agent, SimpleAgent)
+    assert env.simple_agent._agent is env._inner_simple_agent

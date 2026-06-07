@@ -12,7 +12,7 @@ class GameLoop:
     def __init__(self, communicator: Communicator, agent: Agent,
                  run_tracker: RunTracker | None = None):
         self.communicator = communicator
-        self.agent = StuckDetectorAgent(agent)
+        self.agent = agent if isinstance(agent, StuckDetectorAgent) else StuckDetectorAgent(agent)
         self.run_tracker = run_tracker or RunTracker()
         self._ready_sent = False
 
