@@ -103,6 +103,174 @@ poll();
 </html>"""
 
 
+_TRAINING_HTML = """<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Training Progress</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #14142a; font-family: monospace; color: #e0e0e0; padding: 16px; }
+  .panel {
+    background: #1a1a2e;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 16px 18px;
+    max-width: 820px;
+  }
+  .title {
+    color: #a29bfe;
+    font-weight: bold;
+    font-size: 13px;
+    letter-spacing: 0.05em;
+    margin-bottom: 12px;
+  }
+  .stats-row { display: flex; gap: 10px; margin-bottom: 14px; }
+  .stat {
+    background: #14142a;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 6px;
+    padding: 8px 12px;
+    flex: 1;
+  }
+  .stat-label { color: #a8a8b3; font-size: 10px; letter-spacing: 0.05em; }
+  .stat-value { font-size: 14px; font-weight: bold; margin-top: 2px; }
+  .no-data { color: #555; font-size: 11px; text-align: center; padding: 40px 0; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+<div class="panel">
+  <div class="title">TRAINING</div>
+  <div class="stats-row">
+    <div class="stat">
+      <div class="stat-label">EPISODES</div>
+      <div class="stat-value" id="total-episodes" style="color:#ffd700">—</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">TIMESTEPS</div>
+      <div class="stat-value" id="total-timesteps" style="color:#74b9ff">—</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">AVG REWARD (100)</div>
+      <div class="stat-value" id="avg-reward" style="color:#7bed9f">—</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">BEST EPISODE</div>
+      <div class="stat-value" id="best-reward" style="color:#a29bfe">—</div>
+    </div>
+  </div>
+  <canvas id="reward-chart" height="220" style="display:none"></canvas>
+  <div class="no-data" id="no-data">No training data yet — start the agent with --rl</div>
+</div>
+<script>
+const ROLL_WINDOW = 50;
+let chart = null;
+
+function rollingAvg(values) {
+  return values.map((_, i) => {
+    const slice = values.slice(Math.max(0, i - ROLL_WINDOW + 1), i + 1);
+    return slice.reduce((a, b) => a + b, 0) / slice.length;
+  });
+}
+
+function initChart(labels, rewards, avgs) {
+  const ctx = document.getElementById("reward-chart").getContext("2d");
+  chart = new Chart(ctx, {
+    type: "scatter",
+    data: {
+      datasets: [
+        {
+          label: "Episode reward",
+          data: labels.map((x, i) => ({ x, y: rewards[i] })),
+          backgroundColor: "rgba(74, 144, 217, 0.35)",
+          pointRadius: 2,
+          showLine: false,
+        },
+        {
+          label: "Rolling avg (w=50)",
+          data: labels.map((x, i) => ({ x, y: avgs[i] })),
+          borderColor: "#f39c12",
+          borderWidth: 2,
+          pointRadius: 0,
+          showLine: true,
+          tension: 0.3,
+        },
+      ],
+    },
+    options: {
+      animation: false,
+      responsive: true,
+      plugins: {
+        legend: {
+          labels: { color: "#a8a8b3", font: { family: "monospace", size: 11 } },
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: "#555", font: { family: "monospace", size: 10 } },
+          grid: { color: "rgba(255,255,255,0.06)" },
+        },
+        y: {
+          ticks: { color: "#555", font: { family: "monospace", size: 10 } },
+          grid: { color: "rgba(255,255,255,0.06)" },
+        },
+      },
+    },
+  });
+}
+
+function updateChart(labels, rewards, avgs) {
+  chart.data.datasets[0].data = labels.map((x, i) => ({ x, y: rewards[i] }));
+  chart.data.datasets[1].data = labels.map((x, i) => ({ x, y: avgs[i] }));
+  chart.update("none");
+}
+
+async function poll() {
+  try {
+    const resp = await fetch("/api/state");
+    const data = await resp.json();
+    const t = data.training;
+    const noData = document.getElementById("no-data");
+    const canvas = document.getElementById("reward-chart");
+    if (!t || !t.episodes || t.episodes.length === 0) {
+      noData.style.display = "";
+      canvas.style.display = "none";
+      return;
+    }
+    noData.style.display = "none";
+    canvas.style.display = "";
+    document.getElementById("total-episodes").textContent =
+      t.total_episodes.toLocaleString();
+    document.getElementById("total-timesteps").textContent =
+      t.total_timesteps.toLocaleString();
+    const rewards = t.episodes.map(e => e.reward);
+    const labels = t.episodes.map(e => e.ep);
+    const recent = rewards.slice(-100);
+    const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const best = Math.max(...rewards);
+    document.getElementById("avg-reward").textContent =
+      (avg >= 0 ? "+" : "") + avg.toFixed(2);
+    document.getElementById("best-reward").textContent =
+      (best >= 0 ? "+" : "") + best.toFixed(2);
+    const avgs = rollingAvg(rewards);
+    if (!chart) {
+      initChart(labels, rewards, avgs);
+    } else {
+      updateChart(labels, rewards, avgs);
+    }
+  } catch (e) {
+    console.error("poll error:", e);
+  }
+}
+
+setInterval(poll, 3000);
+poll();
+</script>
+</body>
+</html>"""
+
+
 @app.route("/api/state")
 def api_state():
     abs_path = os.path.abspath(LIVE_STATE_PATH)
@@ -142,6 +310,11 @@ def api_debug():
 @app.route("/stats")
 def stats():
     return Response(_STATS_HTML, status=200, mimetype="text/html")
+
+
+@app.route("/training")
+def training():
+    return Response(_TRAINING_HTML, status=200, mimetype="text/html")
 
 
 _GAME_DATA_DIR = r"C:\Program Files (x86)\Steam\steamapps\common\SlayTheSpire\data"
