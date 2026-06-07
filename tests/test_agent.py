@@ -363,3 +363,75 @@ def test_use_attack_potion_on_elite():
     agent = SimpleAgent()
     action = agent.act(state)
     assert action == "POTION Use 0 0"
+
+
+# ── GRID / HAND_SELECT fixtures ───────────────────────────────────────────────
+
+_STRIKE = {"id": "Strike_R", "name": "Strike", "cost": 1, "type": "ATTACK", "uuid": "u1"}
+_DEFEND = {"id": "Defend_R", "name": "Defend", "cost": 1, "type": "SKILL",  "uuid": "u2"}
+_BASH   = {"id": "Bash",     "name": "Bash",   "cost": 2, "type": "ATTACK", "uuid": "u3"}
+
+
+def _grid(cards, selected_cards=None, commands=("CHOOSE", "CANCEL")):
+    return GameState.from_json(json.dumps({
+        "available_commands": list(commands),
+        "ready_for_command": True, "in_game": True,
+        "game_state": {
+            "screen_type": "GRID",
+            "screen_state": {"cards": cards, "selected_cards": selected_cards or [], "num_cards": 2},
+            "seed": 1, "floor": 1, "ascension_level": 0, "class": "IRONCLAD",
+            "current_hp": 70, "max_hp": 80, "gold": 99,
+            "deck": [], "relics": [], "potions": [], "map": [], "act": 1,
+            "combat_state": None,
+        }
+    }))
+
+
+def _hand_select(cards, selected=None, commands=("CHOOSE", "CANCEL")):
+    return GameState.from_json(json.dumps({
+        "available_commands": list(commands),
+        "ready_for_command": True, "in_game": True,
+        "game_state": {
+            "screen_type": "HAND_SELECT",
+            "screen_state": {"cards": cards, "selected": selected or [], "num_cards": 2},
+            "seed": 1, "floor": 1, "ascension_level": 0, "class": "IRONCLAD",
+            "current_hp": 70, "max_hp": 80, "gold": 99,
+            "deck": [], "relics": [], "potions": [], "map": [], "act": 1,
+            "combat_state": None,
+        }
+    }))
+
+
+def test_grid_excludes_already_selected_card():
+    """Agent must not re-pick a card already in selected_cards (avoids deselect oscillation)."""
+    state = _grid(cards=[_STRIKE, _DEFEND, _BASH], selected_cards=[_STRIKE])
+    agent = SimpleAgent()
+    action = agent.act(state)
+    # Strike (uuid u1) is in selected_cards — must not choose index 0
+    assert action != "CHOOSE 0"
+
+
+def test_hand_select_excludes_already_selected_card():
+    """Agent skips cards in the 'selected' array on HAND_SELECT screens."""
+    state = _hand_select(cards=[_STRIKE, _DEFEND], selected=[_STRIKE])
+    agent = SimpleAgent()
+    action = agent.act(state)
+    # Strike (uuid u1) already selected — only Defend (index 1) is available
+    assert action == "CHOOSE 1"
+
+
+def test_grid_confirm_takes_priority():
+    """CONFIRM is returned as soon as it appears in available_commands."""
+    state = _grid(
+        cards=[_STRIKE], selected_cards=[_STRIKE],
+        commands=("CONFIRM", "CANCEL"),
+    )
+    agent = SimpleAgent()
+    assert agent.act(state) == "CONFIRM"
+
+
+def test_grid_cancel_when_all_selected_no_confirm():
+    """Returns CANCEL (not CHOOSE 0) when all cards selected but CONFIRM not yet available."""
+    state = _grid(cards=[_STRIKE], selected_cards=[_STRIKE])
+    agent = SimpleAgent()
+    assert agent.act(state) == "CANCEL"

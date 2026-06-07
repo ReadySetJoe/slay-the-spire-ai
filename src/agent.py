@@ -84,21 +84,7 @@ class SimpleAgent(Agent):
             return self._handle_shop_screen(state)
 
         if state.screen_type in ("GRID", "HAND_SELECT"):
-            # CONFIRM takes priority: sent once enough cards are selected
-            if "CONFIRM" in state.available_commands:
-                return "CONFIRM"
-            if "CHOOSE" in state.available_commands:
-                cards = state.screen_state.get("cards", []) if state.screen_state else []
-                # Only consider cards not already selected to avoid deselect oscillation
-                unselected = [(i, c) for i, c in enumerate(cards)
-                              if not c.get("selected", False)]
-                if unselected:
-                    best_local = pick_best_card([c for _, c in unselected])
-                    best_idx = unselected[best_local if best_local is not None else 0][0]
-                else:
-                    best_idx = 0
-                return f"CHOOSE {best_idx}"
-            return "CANCEL"
+            return self._handle_grid_hand_select(state)
 
         if state.screen_type == "COMBAT_REWARD":
             return self._handle_combat_reward(state)
@@ -240,6 +226,29 @@ class SimpleAgent(Agent):
         logger.info("EVENT | %s | %d options (%d enabled) | chose %d | full_state=%s",
                     name, len(options), len(enabled), choice, ss)
         return f"CHOOSE {choice}"
+
+    def _handle_grid_hand_select(self, state: GameState) -> str:
+        if "CONFIRM" in state.available_commands:
+            return "CONFIRM"
+        if "CHOOSE" in state.available_commands:
+            ss = state.screen_state or {}
+            cards = ss.get("cards", [])
+            # CommunicationMod tracks selected cards in a separate array, not as a
+            # boolean on individual card objects. HAND_SELECT uses "selected";
+            # GRID uses "selected_cards".
+            already_selected = {
+                c.get("uuid")
+                for c in ss.get("selected", []) + ss.get("selected_cards", [])
+            }
+            unselected = [
+                (i, c) for i, c in enumerate(cards)
+                if c.get("uuid") not in already_selected
+            ]
+            if unselected:
+                best_local = pick_best_card([c for _, c in unselected])
+                best_idx = unselected[best_local if best_local is not None else 0][0]
+                return f"CHOOSE {best_idx}"
+        return "CANCEL"
 
     def _handle_map(self, state: GameState) -> str:
         nodes = state.screen_state.get("next_nodes", []) if state.screen_state else []
