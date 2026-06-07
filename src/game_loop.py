@@ -2,7 +2,7 @@
 import logging
 
 from src.communicator import Communicator
-from src.agent import Agent
+from src.agent import Agent, StuckDetectorAgent
 from src.run_tracker import RunTracker
 
 logger = logging.getLogger(__name__)
@@ -12,7 +12,7 @@ class GameLoop:
     def __init__(self, communicator: Communicator, agent: Agent,
                  run_tracker: RunTracker | None = None):
         self.communicator = communicator
-        self.agent = agent
+        self.agent = StuckDetectorAgent(agent)
         self.run_tracker = run_tracker or RunTracker()
         self._ready_sent = False
 

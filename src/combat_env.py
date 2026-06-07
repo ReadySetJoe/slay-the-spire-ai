@@ -6,7 +6,7 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-from src.agent import SimpleAgent
+from src.agent import SimpleAgent, StuckDetectorAgent
 from src.communicator import Communicator
 from src.game_state import GameState
 from src.run_tracker import RunTracker
@@ -32,7 +32,8 @@ class CombatEnv(gym.Env):
         super().__init__()
         self.communicator = communicator
         self.run_tracker = run_tracker or RunTracker()
-        self.simple_agent = SimpleAgent(scorer=scorer)
+        self._inner_simple_agent = SimpleAgent(scorer=scorer)
+        self.simple_agent = StuckDetectorAgent(self._inner_simple_agent)
         self.encoder = StateEncoder()
         self._action_space = ActionSpace()
 
@@ -80,7 +81,7 @@ class CombatEnv(gym.Env):
         use (extremely rare), otherwise None.
         """
         while "POTION" in self._current_state.available_commands:
-            potion_cmd = self.simple_agent._check_potions(self._current_state)
+            potion_cmd = self._inner_simple_agent._check_potions(self._current_state)
             if not potion_cmd:
                 break
             logger.info("Floor %d | HP %d/%d | Potion: %s",

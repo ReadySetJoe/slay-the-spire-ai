@@ -251,3 +251,9 @@ def test_step_end_turn_with_zero_energy_applies_bonus():
 
     assert done is False
     assert reward == pytest.approx(0.1)  # no damage delta + full energy bonus
+
+
+def test_combat_env_wraps_simple_agent_with_stuck_detector():
+    from src.agent import StuckDetectorAgent
+    env = CombatEnv(communicator=MagicMock())
+    assert isinstance(env.simple_agent, StuckDetectorAgent)

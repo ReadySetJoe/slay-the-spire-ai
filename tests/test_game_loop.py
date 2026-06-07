@@ -130,3 +130,10 @@ def test_game_loop_auto_starts_new_run():
         assert output_lines[-1] == "START IRONCLAD 0"
 
 
+def test_game_loop_wraps_agent_with_stuck_detector():
+    from src.agent import StuckDetectorAgent
+    from unittest.mock import MagicMock
+    loop = GameLoop(communicator=MagicMock(), agent=SimpleAgent())
+    assert isinstance(loop.agent, StuckDetectorAgent)
+
+
