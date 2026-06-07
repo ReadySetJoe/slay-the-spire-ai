@@ -1,4 +1,5 @@
 # src/agent.py
+import json
 import logging
 import random
 from abc import ABC, abstractmethod
@@ -6,6 +7,8 @@ from typing import Optional
 
 from src.card_tier_list import get_card_tier, pick_best_card
 from src.game_state import GameState
+
+_FALLBACK_SEQUENCE = ("CONFIRM", "CANCEL", "PROCEED", "SKIP", "STATE")
 
 logger = logging.getLogger(__name__)
 
@@ -334,3 +337,77 @@ class SimpleAgent(Agent):
 
         self._last_shop_gold = None
         return "PROCEED"
+
+
+class StuckDetectorAgent(Agent):
+    """Wraps any Agent and prevents infinite oscillation.
+
+    Tracks a fingerprint of (screen_type, frozenset(available_commands)).
+    Once the same fingerprint has been seen `threshold` times in a row, the
+    wrapper takes over and cycles through _FALLBACK_SEQUENCE instead of
+    delegating to the wrapped agent. A CRITICAL log with full screen_state
+    is emitted so the stuck state can be diagnosed from the log alone.
+
+    Attribute access for unknown names falls through to the wrapped agent,
+    allowing callers to use agent-specific methods (e.g. _check_potions)
+    transparently.
+    """
+
+    def __init__(self, agent: Agent, threshold: int = 3, log_interval: int = 10):
+        self._agent = agent
+        self._threshold = threshold
+        self._log_interval = log_interval
+        self._last_fp: Optional[tuple] = None
+        self._seen_count: int = 0
+        self._action_history: list = []
+
+    def __getattr__(self, name: str):
+        return getattr(self._agent, name)
+
+    def act(self, state: GameState) -> str:
+        fp = (state.screen_type, frozenset(state.available_commands))
+
+        if fp != self._last_fp:
+            self._last_fp = fp
+            self._seen_count = 1
+            self._action_history.clear()
+            action = self._agent.act(state)
+            self._action_history.append(action)
+            return action
+
+        self._seen_count += 1
+
+        if self._seen_count < self._threshold:
+            action = self._agent.act(state)
+            self._action_history.append(action)
+            return action
+
+        # Stuck — take over with fallback sequence
+        stuck_step = self._seen_count - self._threshold  # 0-based
+
+        if stuck_step == 0 or stuck_step % self._log_interval == 0:
+            logger.critical(
+                "STUCK DETECTED — floor=%d hp=%d/%d screen=%s commands=%s\n"
+                "Actions sent (last 5): %s\n"
+                "screen_state: %s\n"
+                "Paste this block into Claude to diagnose.",
+                state.floor, state.current_hp, state.max_hp,
+                state.screen_type, sorted(state.available_commands),
+                list(self._action_history[-5:]),
+                json.dumps(state.screen_state, default=str),
+            )
+
+        idx = min(stuck_step, len(_FALLBACK_SEQUENCE) - 1)
+        cmd = _FALLBACK_SEQUENCE[idx]
+        if cmd not in state.available_commands and cmd != "STATE":
+            cmd = "STATE"
+
+        self._action_history.append(cmd)
+        return cmd
+
+    def on_game_over(self, state: GameState) -> None:
+        if hasattr(self._agent, "on_game_over"):
+            self._agent.on_game_over(state)
+        self._last_fp = None
+        self._seen_count = 0
+        self._action_history.clear()

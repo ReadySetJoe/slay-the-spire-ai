@@ -436,3 +436,170 @@ def test_grid_cancel_when_all_selected_no_confirm():
     state = _grid(cards=[_STRIKE], selected_cards=[_STRIKE])
     agent = SimpleAgent()
     assert agent.act(state) == "CANCEL"
+
+
+# ── StuckDetectorAgent tests ──────────────────────────────────────────────────
+
+import logging
+from unittest.mock import MagicMock
+from src.agent import StuckDetectorAgent
+
+
+def _sda_state(screen_type="MAP", commands=("CHOOSE", "STATE"), floor=2, hp=60, max_hp=80):
+    """Minimal non-combat state for StuckDetectorAgent tests."""
+    return GameState.from_json(json.dumps({
+        "available_commands": list(commands),
+        "ready_for_command": True, "in_game": True,
+        "game_state": {
+            "screen_type": screen_type,
+            "screen_state": {},
+            "seed": 1, "floor": floor, "ascension_level": 0, "class": "IRONCLAD",
+            "current_hp": hp, "max_hp": max_hp, "gold": 50,
+            "deck": [], "relics": [], "potions": [], "map": [], "act": 1,
+            "combat_state": None,
+        }
+    }))
+
+
+def test_sda_delegates_normally_when_fingerprint_changes():
+    """Passes every call through to wrapped agent while fingerprint keeps changing."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    agent.act(_sda_state("MAP",  ["CHOOSE"]))
+    agent.act(_sda_state("REST", ["CHOOSE"]))
+    agent.act(_sda_state("MAP",  ["CHOOSE", "CANCEL"]))
+
+    assert inner.act.call_count == 3
+
+
+def test_sda_delegates_below_threshold():
+    """Still delegates when repeat count is below threshold."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    state = _sda_state("MAP", ["CHOOSE"])
+    agent.act(state)  # seen_count = 1
+    agent.act(state)  # seen_count = 2, still below threshold=3
+
+    assert inner.act.call_count == 2
+
+
+def test_sda_triggers_confirm_at_threshold():
+    """Returns CONFIRM (first fallback) on the threshold-th identical state."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    state = _sda_state("MAP", ["CHOOSE", "CONFIRM"])
+    agent.act(state)  # seen_count=1, delegate
+    agent.act(state)  # seen_count=2, delegate
+    action = agent.act(state)  # seen_count=3, stuck → CONFIRM
+
+    assert action == "CONFIRM"
+    assert inner.act.call_count == 2  # third call did NOT delegate
+
+
+def test_sda_advances_fallback_sequence():
+    """Returns successive fallback commands across consecutive stuck steps."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    state = _sda_state("MAP", ["CHOOSE", "CONFIRM", "CANCEL", "PROCEED"])
+    agent.act(state)  # seen_count=1
+    agent.act(state)  # seen_count=2
+
+    a3 = agent.act(state)  # stuck_step=0 → CONFIRM
+    a4 = agent.act(state)  # stuck_step=1 → CANCEL
+    a5 = agent.act(state)  # stuck_step=2 → PROCEED
+
+    assert a3 == "CONFIRM"
+    assert a4 == "CANCEL"
+    assert a5 == "PROCEED"
+
+
+def test_sda_falls_back_to_state_when_cmd_unavailable():
+    """Returns STATE when the scheduled fallback command is not available."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    # CONFIRM / CANCEL / PROCEED / SKIP not available
+    state = _sda_state("MAP", ["CHOOSE"])
+    agent.act(state)
+    agent.act(state)
+    action = agent.act(state)  # stuck_step=0, CONFIRM unavailable → STATE
+
+    assert action == "STATE"
+
+
+def test_sda_resets_on_fingerprint_change():
+    """Counter resets when a different screen/commands is seen."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    map_state  = _sda_state("MAP",  ["CHOOSE", "CONFIRM"])
+    rest_state = _sda_state("REST", ["CHOOSE"])
+
+    agent.act(map_state)   # seen=1
+    agent.act(map_state)   # seen=2
+    agent.act(rest_state)  # fingerprint changes → reset, seen=1, delegate
+    agent.act(map_state)   # different from REST → reset, seen=1, delegate
+    agent.act(map_state)   # seen=2, below threshold
+    action = agent.act(map_state)  # seen=3 → stuck again
+
+    assert action == "CONFIRM"
+    assert inner.act.call_count == 5  # all steps except the last delegated
+
+
+def test_sda_logs_critical_when_stuck(caplog):
+    """Logs CRITICAL with diagnostic block on the first stuck step."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    state = _sda_state("MAP", ["CHOOSE"], floor=3, hp=45, max_hp=80)
+    agent.act(state)
+    agent.act(state)
+
+    with caplog.at_level(logging.CRITICAL, logger="src.agent"):
+        agent.act(state)
+
+    assert "STUCK DETECTED" in caplog.text
+    assert "MAP" in caplog.text
+    assert "Paste this block into Claude to diagnose" in caplog.text
+
+
+def test_sda_resets_on_game_over():
+    """on_game_over resets stuck state so next run starts clean."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    state = _sda_state("MAP", ["CHOOSE", "CONFIRM"])
+    agent.act(state)
+    agent.act(state)
+    agent.act(state)  # now stuck
+
+    game_over = _sda_state("GAME_OVER", ["PROCEED"])
+    agent.on_game_over(game_over)
+
+    # After reset, should delegate normally for threshold-1 more steps
+    agent.act(state)   # seen=1, delegate
+    agent.act(state)   # seen=2, still below threshold
+    assert inner.act.call_count == 4  # 2 pre-stuck + 2 post-reset
+
+
+def test_sda_delegates_on_game_over_to_wrapped_agent():
+    """on_game_over forwards to the wrapped agent's on_game_over if it exists."""
+    inner = MagicMock()
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    game_over = _sda_state("GAME_OVER", ["PROCEED"])
+    agent.on_game_over(game_over)
+
+    inner.on_game_over.assert_called_once_with(game_over)
