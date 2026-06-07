@@ -116,7 +116,7 @@ _TRAINING_HTML = """<!DOCTYPE html>
   .title {
     color: #a29bfe;
     font-weight: bold;
-    font-size: 32px;
+    font-size: 48px;
     letter-spacing: 0.05em;
     margin-bottom: 16px;
   }
@@ -169,9 +169,7 @@ function initChart(runs, floors, avgs, colors) {
       animation: false,
       responsive: true,
       plugins: {
-        legend: {
-          labels: { color: "#c0c0c0", font: { family: "monospace", size: 16 } },
-        },
+        legend: { display: false },
         tooltip: {
           callbacks: {
             label: ctx => ctx.datasetIndex === 0
@@ -182,14 +180,14 @@ function initChart(runs, floors, avgs, colors) {
       },
       scales: {
         x: {
-          title: { display: true, text: "run", color: "#c0c0c0", font: { family: "monospace", size: 20 } },
-          ticks: { color: "#c0c0c0", font: { family: "monospace", size: 18 } },
+          title: { display: true, text: "run", color: "#c0c0c0", font: { family: "monospace", size: 28 } },
+          ticks: { color: "#c0c0c0", font: { family: "monospace", size: 24 } },
           grid: { color: "rgba(255,255,255,0.06)" },
         },
         y: {
-          title: { display: true, text: "floor", color: "#c0c0c0", font: { family: "monospace", size: 20 } },
+          title: { display: true, text: "floor", color: "#c0c0c0", font: { family: "monospace", size: 28 } },
           min: 0,
-          ticks: { color: "#c0c0c0", font: { family: "monospace", size: 18 }, stepSize: 5 },
+          ticks: { color: "#c0c0c0", font: { family: "monospace", size: 24 }, stepSize: 5 },
           grid: { color: "rgba(255,255,255,0.06)" },
         },
       },
