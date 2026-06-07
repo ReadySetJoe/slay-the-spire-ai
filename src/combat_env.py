@@ -15,6 +15,8 @@ from src.action_space import ActionSpace
 
 logger = logging.getLogger(__name__)
 
+_BASE_MAX_ENERGY = 3  # Ironclad A0 base; update if relic/buff energy tracking is added
+
 
 class CombatEnv(gym.Env):
     """
@@ -115,7 +117,7 @@ class CombatEnv(gym.Env):
         kills = max(prev_living - new_living, 0)
         base = damage_dealt - damage_taken + 0.1 * kills
         if action == ActionSpace.END_TURN_ACTION:
-            base += self._energy_efficiency_bonus * (1 - prev_energy / 3)
+            base += self._energy_efficiency_bonus * (1 - prev_energy / _BASE_MAX_ENERGY)
         return base
 
     def step(self, action: int):
