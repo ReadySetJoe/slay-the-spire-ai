@@ -359,9 +359,11 @@ class StuckDetectorAgent(Agent):
         self._log_interval = log_interval
         self._last_fp: Optional[tuple] = None
         self._seen_count: int = 0
-        self._action_history: list = []
+        self._action_history: list[str] = []
 
     def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
         return getattr(self._agent, name)
 
     def act(self, state: GameState) -> str:
