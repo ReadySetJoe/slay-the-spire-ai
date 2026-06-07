@@ -164,7 +164,7 @@ _TRAINING_HTML = """<!DOCTYPE html>
   <div class="no-data" id="no-data">No training data yet — start the agent with --rl</div>
 </div>
 <script>
-const ROLL_WINDOW = 50;
+const ROLL_WINDOW = 50;  // chart smoothing window; stat chip uses last-100 for a broader avg
 let chart = null;
 
 function rollingAvg(values) {
@@ -344,5 +344,6 @@ if __name__ == "__main__":
     LIVE_STATE_PATH = os.path.join(data_dir, "live_state.json")
     print(f"Reading stats from: {os.path.abspath(LIVE_STATE_PATH)}")
     print("Stats panel: http://localhost:5000/stats")
+    print("Training:    http://localhost:5000/training")
     print("Debug info:  http://localhost:5000/api/debug")
     app.run(host="0.0.0.0", port=5000, debug=False)
