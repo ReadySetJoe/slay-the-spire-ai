@@ -40,6 +40,12 @@ class RunEnv(gym.Env):
         self._debuff_applied_this_turn: bool = False
         self._current_turn: int = 0
 
+        # Per-episode metric tracking (reset in reset())
+        self._episode_reward_total: float = 0.0
+        self._turn_energy_remaining: list = []   # energy left each time END is played
+        self._action_buckets: dict = {"play": 0, "end": 0, "potion": 0, "noncombat": 0}
+        self._card_picks_this_run: list = []
+
     def action_masks(self) -> np.ndarray:
         if self._current_state is None:
             return np.ones(RunActionSpace.TOTAL_ACTIONS, dtype=np.bool_)
@@ -49,6 +55,10 @@ class RunEnv(gym.Env):
         super().reset(seed=seed)
         self._debuff_applied_this_turn = False
         self._current_turn = 0
+        self._episode_reward_total = 0.0
+        self._turn_energy_remaining = []
+        self._action_buckets = {"play": 0, "end": 0, "potion": 0, "noncombat": 0}
+        self._card_picks_this_run = []
 
         if not self._initialized:
             self.communicator.send_ready()
@@ -98,6 +108,16 @@ class RunEnv(gym.Env):
             return self._handle_game_over(prev, state)
 
         reward = self._compute_reward(action, prev, state)
+
+        # Accumulate per-episode metrics
+        self._episode_reward_total += reward
+        bucket = ("play" if action <= 59 else "end" if action == 60
+                  else "potion" if action <= 90 else "noncombat")
+        self._action_buckets[bucket] += 1
+        if action == RunActionSpace.END_TURN and prev.is_in_combat:
+            self._turn_energy_remaining.append(prev.energy)
+        if prev.screen_type == "CARD_REWARD" and 91 <= action <= 98:
+            self._track_card_pick(action, prev)
 
         # Update debuff tracking after computing reward
         if prev.is_in_combat:
@@ -165,6 +185,19 @@ class RunEnv(gym.Env):
             if props.get("applies_vulnerable") or props.get("applies_weak"):
                 self._debuff_applied_this_turn = True
 
+    def _track_card_pick(self, action: int, prev: GameState) -> None:
+        idx = action - 91
+        cards = (prev.screen_state or {}).get("cards", [])
+        if idx < len(cards):
+            from src.card_tier_list import get_card_tier
+            card = cards[idx]
+            self._card_picks_this_run.append({
+                "id": card.get("id", ""),
+                "name": card.get("name") or card.get("id", ""),
+                "tier": get_card_tier(card.get("id", "")) or "C",
+                "run": self.run_tracker.run_number + 1,
+            })
+
     def _noncombat_reward(self, action: int, prev: GameState, new: GameState) -> float:
         screen = prev.screen_type
         ss     = prev.screen_state or {}
@@ -208,11 +241,36 @@ class RunEnv(gym.Env):
 
     def _handle_game_over(self, prev: GameState, state: GameState):
         reward = self.reward_shaper.terminal_reward(state.floor)
-        self.run_tracker.record_run(state)
+        self._episode_reward_total += reward
+
+        if self._turn_energy_remaining:
+            energy_efficiency = 1.0 - sum(self._turn_energy_remaining) / (
+                len(self._turn_energy_remaining) * 4
+            )
+        else:
+            energy_efficiency = 1.0
+
+        self.run_tracker.record_run(
+            state,
+            version="v2",
+            episode_reward=round(self._episode_reward_total, 4),
+            energy_efficiency=round(energy_efficiency, 4),
+        )
+
+        writer = self.run_tracker.live_state_writer
+        if writer:
+            writer.write_v2_metrics(
+                action_counts=dict(self._action_buckets),
+                card_picks=list(self._card_picks_this_run),
+                episode_reward=round(self._episode_reward_total, 4),
+                energy_efficiency=round(energy_efficiency, 4),
+            )
+
         summary = self.run_tracker.summary()
         logger.info(
-            "GAME_OVER | floor=%d | runs=%d | win_rate=%.1f%%",
+            "GAME_OVER | floor=%d | runs=%d | win_rate=%.1f%% | reward=%.3f | energy=%.0f%%",
             state.floor, summary["total_runs"], summary["win_rate"] * 100,
+            self._episode_reward_total, energy_efficiency * 100,
         )
         self.communicator.send_command("PROCEED")
         obs = self.encoder.encode(prev)

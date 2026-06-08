@@ -45,6 +45,28 @@ class LiveStateWriter:
         }
         self._update("stats", stats)
 
+    def write_v2_metrics(
+        self,
+        action_counts: dict,
+        card_picks: list,
+        episode_reward: float,
+        energy_efficiency: float,
+        max_history: int = 200,
+    ) -> None:
+        existing = {}
+        if os.path.exists(self.path):
+            try:
+                with open(self.path) as f:
+                    existing = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        v2 = existing.get("v2", {})
+        v2["episode_rewards"] = (v2.get("episode_rewards", []) + [episode_reward])[-max_history:]
+        v2["energy_efficiency"] = (v2.get("energy_efficiency", []) + [energy_efficiency])[-max_history:]
+        v2["action_counts_last_run"] = action_counts
+        v2["recent_card_picks"] = (card_picks + v2.get("recent_card_picks", []))[:20]
+        self._update("v2", v2)
+
     def write_training_step(
         self,
         episodes: list[dict],
