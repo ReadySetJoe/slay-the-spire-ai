@@ -130,11 +130,56 @@ def test_card_reward_chooses_or_skips():
     assert action.startswith("CHOOSE") or action == "PROCEED"
 
 
+def _rest_state(options, hp=50, max_hp=80):
+    return GameState.from_json(json.dumps({
+        "available_commands": ["CHOOSE", "STATE"],
+        "ready_for_command": True, "in_game": True,
+        "game_state": {
+            "screen_type": "REST",
+            "screen_state": {"options": options},
+            "seed": 1, "floor": 6, "ascension_level": 0, "class": "IRONCLAD",
+            "current_hp": hp, "max_hp": max_hp, "gold": 99,
+            "deck": [], "relics": [], "potions": [], "map": [], "act": 1,
+            "combat_state": None,
+        },
+    }))
+
+
 def test_rest_site():
     state = GameState.from_json(REST_SITE_STATE)
     agent = SimpleAgent()
     action = agent.act(state)
     assert action.startswith("CHOOSE")
+
+
+def test_rest_prefers_rest_when_low_hp():
+    """Picks 'rest' over 'smith' when HP < 60%."""
+    state = _rest_state(options=["rest", "smith"], hp=40, max_hp=80)
+    assert SimpleAgent().act(state) == "CHOOSE rest"
+
+
+def test_rest_prefers_smith_when_healthy():
+    """Picks 'smith' over 'rest' when HP >= 60%."""
+    state = _rest_state(options=["rest", "smith"], hp=60, max_hp=80)
+    assert SimpleAgent().act(state) == "CHOOSE smith"
+
+
+def test_rest_coffee_dripper_skips_to_smith():
+    """With Coffee Dripper, 'rest' is absent from options — should pick 'smith'."""
+    state = _rest_state(options=["smith"], hp=20, max_hp=80)
+    assert SimpleAgent().act(state) == "CHOOSE smith"
+
+
+def test_rest_disabled_dict_format():
+    """Handles CommunicationMod dict format where disabled options are included but flagged."""
+    state = _rest_state(
+        options=[
+            {"id": "rest",  "disabled": True},
+            {"id": "smith", "disabled": False},
+        ],
+        hp=20, max_hp=80,
+    )
+    assert SimpleAgent().act(state) == "CHOOSE smith"
 
 
 def test_map_chooses_node():
@@ -363,3 +408,327 @@ def test_use_attack_potion_on_elite():
     agent = SimpleAgent()
     action = agent.act(state)
     assert action == "POTION Use 0 0"
+
+
+# ── GRID / HAND_SELECT fixtures ───────────────────────────────────────────────
+
+_STRIKE = {"id": "Strike_R", "name": "Strike", "cost": 1, "type": "ATTACK", "uuid": "u1"}
+_DEFEND = {"id": "Defend_R", "name": "Defend", "cost": 1, "type": "SKILL",  "uuid": "u2"}
+_BASH   = {"id": "Bash",     "name": "Bash",   "cost": 2, "type": "ATTACK", "uuid": "u3"}
+
+
+def _grid(cards, selected_cards=None, commands=("CHOOSE", "CANCEL")):
+    return GameState.from_json(json.dumps({
+        "available_commands": list(commands),
+        "ready_for_command": True, "in_game": True,
+        "game_state": {
+            "screen_type": "GRID",
+            "screen_state": {"cards": cards, "selected_cards": selected_cards or [], "num_cards": 2},
+            "seed": 1, "floor": 1, "ascension_level": 0, "class": "IRONCLAD",
+            "current_hp": 70, "max_hp": 80, "gold": 99,
+            "deck": [], "relics": [], "potions": [], "map": [], "act": 1,
+            "combat_state": None,
+        }
+    }))
+
+
+def _hand_select(cards, selected=None, commands=("CHOOSE", "CANCEL")):
+    return GameState.from_json(json.dumps({
+        "available_commands": list(commands),
+        "ready_for_command": True, "in_game": True,
+        "game_state": {
+            "screen_type": "HAND_SELECT",
+            "screen_state": {"cards": cards, "selected": selected or [], "num_cards": 2},
+            "seed": 1, "floor": 1, "ascension_level": 0, "class": "IRONCLAD",
+            "current_hp": 70, "max_hp": 80, "gold": 99,
+            "deck": [], "relics": [], "potions": [], "map": [], "act": 1,
+            "combat_state": None,
+        }
+    }))
+
+
+def test_grid_excludes_already_selected_card():
+    """Agent picks the best unselected card, not the already-selected one."""
+    state = _grid(cards=[_STRIKE, _DEFEND, _BASH], selected_cards=[_STRIKE])
+    agent = SimpleAgent()
+    action = agent.act(state)
+    # Strike (u1) excluded; remaining: Defend (D-tier, idx 1) and Bash (C-tier, idx 2).
+    # pick_best_card chooses Bash as the higher tier → CHOOSE 2.
+    assert action == "CHOOSE 2"
+
+
+def test_hand_select_excludes_already_selected_card():
+    """Agent skips cards in the 'selected' array on HAND_SELECT screens."""
+    state = _hand_select(cards=[_STRIKE, _DEFEND], selected=[_STRIKE])
+    agent = SimpleAgent()
+    action = agent.act(state)
+    # Strike (uuid u1) already selected — only Defend (index 1) is available
+    assert action == "CHOOSE 1"
+
+
+def test_grid_confirm_takes_priority():
+    """CONFIRM is returned as soon as it appears in available_commands."""
+    state = _grid(
+        cards=[_STRIKE], selected_cards=[_STRIKE],
+        commands=("CONFIRM", "CANCEL"),
+    )
+    agent = SimpleAgent()
+    assert agent.act(state) == "CONFIRM"
+
+
+def test_grid_cancel_when_all_selected_no_confirm():
+    """Returns CANCEL (not CHOOSE 0) when all cards selected but CONFIRM not yet available."""
+    state = _grid(cards=[_STRIKE], selected_cards=[_STRIKE])
+    agent = SimpleAgent()
+    assert agent.act(state) == "CANCEL"
+
+
+def test_hand_select_choose_0_when_cancel_unavailable():
+    """When no unselected cards but CANCEL is not available, sends CHOOSE 0.
+
+    Reproduces the Elixir-potion HAND_SELECT bug: game requires a card pick
+    (CANCEL absent) but UUID tracking finds nothing to select. The agent must
+    not send CANCEL (invalid) and must not return STATE (game still wants CHOOSE).
+    """
+    # No CANCEL in commands — game requires a mandatory pick
+    state = _hand_select(
+        cards=[_STRIKE, _DEFEND],
+        selected=[],
+        commands=("CHOOSE", "POTION", "STATE"),
+    )
+    agent = SimpleAgent()
+    # No UUIDs appear in selected, so unselected == all cards.
+    # This test verifies the fallback when uuid tracking returns empty (cards=[]).
+    # Simulate by using a state where cards list is empty but CHOOSE is available.
+    empty_cards = _hand_select(cards=[], selected=[], commands=("CHOOSE", "STATE"))
+    assert agent.act(empty_cards) == "CHOOSE 0"
+
+
+def test_hand_select_state_when_no_choose_no_cancel():
+    """Returns STATE when neither CHOOSE nor CANCEL is available."""
+    state = _hand_select(cards=[], selected=[], commands=("STATE", "WAIT"))
+    agent = SimpleAgent()
+    assert agent.act(state) == "STATE"
+
+
+# ── StuckDetectorAgent tests ──────────────────────────────────────────────────
+
+import logging
+from unittest.mock import MagicMock
+from src.agent import StuckDetectorAgent
+
+
+def _sda_state(screen_type="MAP", commands=("CHOOSE", "STATE"), floor=2, hp=60, max_hp=80):
+    """Minimal non-combat state for StuckDetectorAgent tests."""
+    return GameState.from_json(json.dumps({
+        "available_commands": list(commands),
+        "ready_for_command": True, "in_game": True,
+        "game_state": {
+            "screen_type": screen_type,
+            "screen_state": {},
+            "seed": 1, "floor": floor, "ascension_level": 0, "class": "IRONCLAD",
+            "current_hp": hp, "max_hp": max_hp, "gold": 50,
+            "deck": [], "relics": [], "potions": [], "map": [], "act": 1,
+            "combat_state": None,
+        }
+    }))
+
+
+def test_sda_delegates_normally_when_fingerprint_changes():
+    """Passes every call through to wrapped agent while fingerprint keeps changing."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    agent.act(_sda_state("MAP",  ["CHOOSE"]))
+    agent.act(_sda_state("REST", ["CHOOSE"]))
+    agent.act(_sda_state("MAP",  ["CHOOSE", "CANCEL"]))
+
+    assert inner.act.call_count == 3
+
+
+def test_sda_delegates_below_threshold():
+    """Still delegates when repeat count is below threshold."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    state = _sda_state("MAP", ["CHOOSE"])
+    agent.act(state)  # seen_count = 1
+    agent.act(state)  # seen_count = 2, still below threshold=3
+
+    assert inner.act.call_count == 2
+
+
+def test_sda_triggers_confirm_at_threshold():
+    """Returns CONFIRM (first fallback) on the threshold-th identical state."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    state = _sda_state("MAP", ["CHOOSE", "CONFIRM"])
+    agent.act(state)  # seen_count=1, delegate
+    agent.act(state)  # seen_count=2, delegate
+    action = agent.act(state)  # seen_count=3, stuck → CONFIRM
+
+    assert action == "CONFIRM"
+    assert inner.act.call_count == 2  # third call did NOT delegate
+
+
+def test_sda_advances_fallback_sequence():
+    """Returns successive fallback commands across consecutive stuck steps."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    state = _sda_state("MAP", ["CHOOSE", "CONFIRM", "CANCEL", "PROCEED"])
+    agent.act(state)  # seen_count=1
+    agent.act(state)  # seen_count=2
+
+    a3 = agent.act(state)  # stuck_step=0 → CONFIRM
+    a4 = agent.act(state)  # stuck_step=1 → CANCEL
+    a5 = agent.act(state)  # stuck_step=2 → PROCEED
+
+    assert a3 == "CONFIRM"
+    assert a4 == "CANCEL"
+    assert a5 == "PROCEED"
+
+
+def test_sda_falls_back_to_state_when_cmd_unavailable():
+    """Returns STATE when the scheduled fallback command is not available."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    # CONFIRM / CANCEL / PROCEED / SKIP not available
+    state = _sda_state("MAP", ["CHOOSE"])
+    agent.act(state)
+    agent.act(state)
+    action = agent.act(state)  # stuck_step=0, CONFIRM unavailable → STATE
+
+    assert action == "STATE"
+
+
+def test_sda_scans_forward_when_scheduled_cmd_unavailable():
+    """When the scheduled fallback is unavailable, scans forward to the next available one."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    # CONFIRM unavailable, CANCEL available → should return CANCEL at stuck_step=0
+    state = _sda_state("MAP", ["CHOOSE", "CANCEL"])
+    agent.act(state)
+    agent.act(state)
+    action = agent.act(state)  # stuck_step=0: CONFIRM unavailable → scan → CANCEL
+
+    assert action == "CANCEL"
+
+
+def test_sda_resets_on_fingerprint_change():
+    """Counter resets when a different screen/commands is seen."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    map_state  = _sda_state("MAP",  ["CHOOSE", "CONFIRM"])
+    rest_state = _sda_state("REST", ["CHOOSE"])
+
+    agent.act(map_state)   # seen=1
+    agent.act(map_state)   # seen=2
+    agent.act(rest_state)  # fingerprint changes → reset, seen=1, delegate
+    agent.act(map_state)   # different from REST → reset, seen=1, delegate
+    agent.act(map_state)   # seen=2, below threshold
+    action = agent.act(map_state)  # seen=3 → stuck again
+
+    assert action == "CONFIRM"
+    assert inner.act.call_count == 5  # all steps except the last delegated
+
+
+def test_sda_logs_critical_when_stuck(caplog):
+    """Logs CRITICAL with diagnostic block on the first stuck step."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    state = _sda_state("MAP", ["CHOOSE"], floor=3, hp=45, max_hp=80)
+    agent.act(state)
+    agent.act(state)
+
+    with caplog.at_level(logging.CRITICAL, logger="src.agent"):
+        agent.act(state)
+
+    assert "STUCK DETECTED" in caplog.text
+    assert "MAP" in caplog.text
+    assert "Paste this block into Claude to diagnose" in caplog.text
+
+
+def test_sda_resets_on_game_over():
+    """on_game_over resets stuck state so next run starts clean."""
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    state = _sda_state("MAP", ["CHOOSE", "CONFIRM"])
+    agent.act(state)
+    agent.act(state)
+    agent.act(state)  # now stuck
+
+    game_over = _sda_state("GAME_OVER", ["PROCEED"])
+    agent.on_game_over(game_over)
+
+    # After reset, should delegate normally for threshold-1 more steps
+    agent.act(state)   # seen=1, delegate
+    agent.act(state)   # seen=2, still below threshold
+    assert inner.act.call_count == 4  # 2 pre-stuck + 2 post-reset
+
+
+def test_sda_resets_when_screen_state_changes():
+    """Different screen_state on same screen_type/commands resets stuck counter.
+
+    Reproduces the Neow bug: [Talk] → 2-options → [Leave] all share the same
+    screen_type (EVENT) and available_commands, but have different options in
+    screen_state. With screen_state in the fingerprint, each stage is distinct
+    and CHOOSE 0 is delegated without false stuck detection firing.
+    """
+    inner = MagicMock()
+    inner.act.return_value = "CHOOSE 0"
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    commands = ["CHOOSE", "CLICK", "KEY", "STATE", "WAIT"]
+
+    def _neow_state(options):
+        return GameState.from_json(json.dumps({
+            "available_commands": commands,
+            "ready_for_command": True, "in_game": True,
+            "game_state": {
+                "screen_type": "EVENT",
+                "screen_state": {"event_name": "Neow", "options": options},
+                "seed": 1, "floor": 0, "ascension_level": 0, "class": "IRONCLAD",
+                "current_hp": 80, "max_hp": 80, "gold": 99,
+                "deck": [], "relics": [], "potions": [], "map": [], "act": 1,
+                "combat_state": None,
+            },
+        }))
+
+    talk   = _neow_state([{"choice_index": 0, "text": "[Talk]",  "disabled": False}])
+    opts   = _neow_state([{"choice_index": 0, "text": "[1 HP]",  "disabled": False},
+                          {"choice_index": 1, "text": "[+8 HP]", "disabled": False}])
+    leave  = _neow_state([{"choice_index": 0, "text": "[Leave]", "disabled": False}])
+
+    a1 = agent.act(talk)   # fp changes → delegate
+    a2 = agent.act(opts)   # fp changes → delegate
+    a3 = agent.act(leave)  # fp changes → delegate (NOT stuck)
+
+    assert a1 == a2 == a3 == "CHOOSE 0"
+    assert inner.act.call_count == 3
+
+
+def test_sda_delegates_on_game_over_to_wrapped_agent():
+    """on_game_over forwards to the wrapped agent's on_game_over if it exists."""
+    inner = MagicMock()
+    agent = StuckDetectorAgent(inner, threshold=3)
+
+    game_over = _sda_state("GAME_OVER", ["PROCEED"])
+    agent.on_game_over(game_over)
+
+    inner.on_game_over.assert_called_once_with(game_over)

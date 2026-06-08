@@ -2,7 +2,7 @@
 import logging
 
 from src.communicator import Communicator
-from src.agent import Agent
+from src.agent import Agent, StuckDetectorAgent
 from src.run_tracker import RunTracker
 
 logger = logging.getLogger(__name__)
@@ -12,7 +12,7 @@ class GameLoop:
     def __init__(self, communicator: Communicator, agent: Agent,
                  run_tracker: RunTracker | None = None):
         self.communicator = communicator
-        self.agent = agent
+        self.agent = agent if isinstance(agent, StuckDetectorAgent) else StuckDetectorAgent(agent)
         self.run_tracker = run_tracker or RunTracker()
         self._ready_sent = False
 
@@ -38,6 +38,8 @@ class GameLoop:
             if "START" in state.available_commands:
                 logger.info("Starting new run...")
                 self.communicator.send_command("START IRONCLAD 0")
+            else:
+                self.communicator.send_command("STATE")
             return True
 
         if state.screen_type == "GAME_OVER":
@@ -80,6 +82,8 @@ class GameLoop:
                 if "START" in state.available_commands:
                     logger.info("Starting new run...")
                     self.communicator.send_command("START IRONCLAD 0")
+                else:
+                    self.communicator.send_command("STATE")
                 continue
 
             if state.screen_type == "GAME_OVER":
@@ -99,4 +103,6 @@ class GameLoop:
             action = self.agent.act(state)
             logger.info("Floor %d | HP %d/%d | Screen: %s | Action: %s",
                         state.floor, state.current_hp, state.max_hp, state.screen_type, action)
+            if self.run_tracker.live_state_writer:
+                self.run_tracker.live_state_writer.write(state, action)
             self.communicator.send_command(action)

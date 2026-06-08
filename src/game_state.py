@@ -81,6 +81,10 @@ class GameState:
 
         return state
 
+    # Screens that appear mid-combat (e.g. Armaments → GRID, Dual Wield → HAND_SELECT).
+    # combat_state is still populated; we must not treat these as combat-over.
+    _IN_COMBAT_SCREENS = frozenset({"NONE", "GRID", "HAND_SELECT"})
+
     @property
     def is_in_combat(self) -> bool:
-        return self.combat_state is not None and self.screen_type == "NONE"
+        return self.combat_state is not None and self.screen_type in self._IN_COMBAT_SCREENS

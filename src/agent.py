@@ -1,4 +1,5 @@
 # src/agent.py
+import json
 import logging
 import random
 from abc import ABC, abstractmethod
@@ -6,6 +7,8 @@ from typing import Optional
 
 from src.card_tier_list import get_card_tier, pick_best_card
 from src.game_state import GameState
+
+_FALLBACK_SEQUENCE = ("CONFIRM", "CANCEL", "PROCEED", "LEAVE", "SKIP", "STATE")
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,13 @@ class SimpleAgent(Agent):
         self._last_shop_gold = None
 
     def act(self, state: GameState) -> str:
+        # GRID/HAND_SELECT must be checked before is_in_combat: these screens can
+        # appear mid-combat (Warcry → HAND_SELECT, Headbutt → GRID) and
+        # is_in_combat returns True for them, which would otherwise route here to
+        # _handle_combat and send "END" into a card-selection prompt.
+        if state.screen_type in ("GRID", "HAND_SELECT"):
+            return self._handle_grid_hand_select(state)
+
         if state.is_in_combat:
             return self._handle_combat(state)
 
@@ -72,26 +82,16 @@ class SimpleAgent(Agent):
         if state.screen_type == "CHEST":
             if "OPEN" in state.available_commands:
                 return "OPEN"
+            if "CHOOSE" in state.available_commands:
+                return "CHOOSE 0"
             if "PROCEED" in state.available_commands:
                 return "PROCEED"
 
         if state.screen_type == "EVENT":
             return self._handle_event(state)
 
-        if state.screen_type == "SHOP_ROOM":
-            return "PROCEED"
-
-        if state.screen_type == "SHOP_SCREEN":
+        if state.screen_type in ("SHOP_ROOM", "SHOP_SCREEN"):
             return self._handle_shop_screen(state)
-
-        if state.screen_type in ("GRID", "HAND_SELECT"):
-            if "CHOOSE" in state.available_commands:
-                cards = state.screen_state.get("cards", []) if state.screen_state else []
-                best = pick_best_card(cards) if cards else None
-                return f"CHOOSE {best if best is not None else 0}"
-            if "CONFIRM" in state.available_commands:
-                return "CONFIRM"
-            return "CANCEL"
 
         if state.screen_type == "COMBAT_REWARD":
             return self._handle_combat_reward(state)
@@ -101,6 +101,9 @@ class SimpleAgent(Agent):
 
         if "PROCEED" in state.available_commands:
             return "PROCEED"
+
+        if "LEAVE" in state.available_commands:
+            return "LEAVE"
 
         if "CHOOSE" in state.available_commands:
             return "CHOOSE 0"
@@ -189,8 +192,35 @@ class SimpleAgent(Agent):
     def _handle_rest(self, state: GameState) -> str:
         if "CHOOSE" not in state.available_commands:
             return "PROCEED"
-        # Rest if below 60% HP, otherwise smith
+
         hp_ratio = state.current_hp / max(state.max_hp, 1)
+
+        # Parse which options are actually enabled from screen_state.
+        # CommunicationMod may use "rest_options" or "options"; try both.
+        ss = state.screen_state or {}
+        raw = ss.get("rest_options") or ss.get("options", [])
+        available: set[str] = set()
+        for opt in raw:
+            if isinstance(opt, str):
+                available.add(opt.lower())
+            elif isinstance(opt, dict) and not opt.get("disabled", False):
+                oid = opt.get("id", "").lower()
+                if oid:
+                    available.add(oid)
+
+        priority = (
+            ("rest", "smith", "lift", "toke", "dig", "recall")
+            if hp_ratio < 0.6
+            else ("smith", "rest", "lift", "toke", "dig", "recall")
+        )
+
+        if available:
+            for option in priority:
+                if option in available:
+                    return f"CHOOSE {option}"
+            return f"CHOOSE {next(iter(available))}"
+
+        # No screen_state data — blind priority pick
         if hp_ratio < 0.6:
             return "CHOOSE rest"
         return "CHOOSE smith"
@@ -219,11 +249,63 @@ class SimpleAgent(Agent):
         ss = state.screen_state or {}
         name = ss.get("event_name") or ss.get("name") or "unknown"
         options = ss.get("options", [])
-        n_options = len(options) if options else 2  # safe fallback
-        choice = random.randrange(n_options)
-        logger.info("EVENT | %s | %d options | chose %d | full_state=%s",
-                    name, n_options, choice, ss)
+        # Use choice_index from each option dict — that's what CommunicationMod
+        # expects in the CHOOSE command. Filter out disabled options.
+        enabled = [
+            opt.get("choice_index", i)
+            for i, opt in enumerate(options)
+            if not opt.get("disabled", False)
+        ]
+        if not enabled:
+            # All options disabled (shouldn't happen) — fall back to first
+            enabled = [options[0].get("choice_index", 0)] if options else [0]
+        choice = random.choice(enabled)
+        logger.info("EVENT | %s | %d options (%d enabled) | chose %d | full_state=%s",
+                    name, len(options), len(enabled), choice, ss)
         return f"CHOOSE {choice}"
+
+    def _handle_grid_hand_select(self, state: GameState) -> str:
+        ss = state.screen_state or {}
+        cards = ss.get("cards", [])
+        # CommunicationMod tracks selected cards in a separate array, not as a
+        # boolean on individual card objects. HAND_SELECT uses "selected";
+        # GRID uses "selected_cards".
+        already_selected = {
+            c.get("uuid")
+            for c in ss.get("selected", []) + ss.get("selected_cards", [])
+        }
+        unselected = [
+            (i, c) for i, c in enumerate(cards)
+            if c.get("uuid") not in already_selected
+        ]
+
+        if ss.get("any_number", False):
+            # Optional discard-and-redraw (Gambling Chip): swap D-tier cards only.
+            if "CHOOSE" in state.available_commands:
+                d_tier = [
+                    (i, c) for i, c in unselected
+                    if get_card_tier(c.get("id", "")) == "D"
+                ]
+                if d_tier:
+                    return f"CHOOSE {d_tier[0][0]}"
+            if "CONFIRM" in state.available_commands:
+                return "CONFIRM"
+
+        # Required selection (Warcry → HAND_SELECT, Headbutt → GRID, etc.)
+        if "CONFIRM" in state.available_commands:
+            return "CONFIRM"
+        if "CHOOSE" in state.available_commands:
+            if unselected:
+                best_local = pick_best_card([c for _, c in unselected])
+                best_idx = unselected[best_local if best_local is not None else 0][0]
+                return f"CHOOSE {best_idx}"
+            if "CANCEL" not in state.available_commands:
+                # UUID tracking found no candidates but game still wants a CHOOSE.
+                # (CANCEL unavailable means the game requires a selection.)
+                return "CHOOSE 0"
+        if "CANCEL" in state.available_commands:
+            return "CANCEL"
+        return "STATE"
 
     def _handle_map(self, state: GameState) -> str:
         nodes = state.screen_state.get("next_nodes", []) if state.screen_state else []
@@ -309,3 +391,93 @@ class SimpleAgent(Agent):
 
         self._last_shop_gold = None
         return "PROCEED"
+
+
+class StuckDetectorAgent(Agent):
+    """Wraps any Agent and prevents infinite oscillation.
+
+    Tracks a fingerprint of (screen_type, frozenset(available_commands)).
+    Once the same fingerprint has been seen `threshold` times in a row, the
+    wrapper takes over and cycles through _FALLBACK_SEQUENCE instead of
+    delegating to the wrapped agent. A CRITICAL log with full screen_state
+    is emitted so the stuck state can be diagnosed from the log alone.
+
+    Public attribute access falls through to the wrapped agent via __getattr__.
+    Private (_-prefixed) names raise AttributeError intentionally — this keeps
+    pickle/deepcopy safe. Callers needing private methods on the wrapped agent
+    (e.g. _check_potions) must hold a direct reference to it.
+    """
+
+    def __init__(self, agent: Agent, threshold: int = 3, log_interval: int = 10):
+        self._agent = agent
+        self._threshold = threshold
+        self._log_interval = log_interval
+        self._last_fp: Optional[tuple] = None
+        self._seen_count: int = 0
+        self._action_history: list[str] = []
+
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._agent, name)
+
+    def act(self, state: GameState) -> str:
+        fp = (
+            state.screen_type,
+            frozenset(state.available_commands),
+            json.dumps(state.screen_state, sort_keys=True, default=str),
+        )
+
+        if fp != self._last_fp:
+            self._last_fp = fp
+            self._seen_count = 1
+            self._action_history.clear()
+            action = self._agent.act(state)
+            self._action_history.append(action)
+            return action
+
+        self._seen_count += 1
+
+        if self._seen_count < self._threshold:
+            action = self._agent.act(state)
+            self._action_history.append(action)
+            return action
+
+        # Stuck — take over with fallback sequence
+        stuck_step = self._seen_count - self._threshold  # 0-based
+
+        if stuck_step == 0 or stuck_step % self._log_interval == 0:
+            logger.critical(
+                "STUCK DETECTED — floor=%d hp=%d/%d screen=%s commands=%s\n"
+                "Actions sent (last 5): %s\n"
+                "screen_state: %s\n"
+                "Paste this block into Claude to diagnose.",
+                state.floor, state.current_hp, state.max_hp,
+                state.screen_type, sorted(state.available_commands),
+                list(self._action_history[-5:]),
+                json.dumps(state.screen_state, default=str),
+            )
+
+        start = min(stuck_step, len(_FALLBACK_SEQUENCE) - 1)
+        cmd = "STATE"
+        for i in range(start, len(_FALLBACK_SEQUENCE)):
+            candidate = _FALLBACK_SEQUENCE[i]
+            if candidate in state.available_commands or candidate == "STATE":
+                cmd = candidate
+                break
+
+        # After emitting STATE, reset the stuck counter so the next state response
+        # gets a fresh fingerprint comparison instead of immediately saturating again.
+        if cmd == "STATE":
+            self._last_fp = None
+            self._seen_count = 0
+
+        self._action_history.append(cmd)
+        return cmd
+
+    def on_game_over(self, state: GameState) -> None:
+        if hasattr(self._agent, "on_game_over"):
+            self._agent.on_game_over(state)
+        self._last_fp = None
+        self._seen_count = 0
+        self._action_history.clear()

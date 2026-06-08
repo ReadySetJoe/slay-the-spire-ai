@@ -141,7 +141,7 @@ def main():
             )
             logger.info("Created new MaskablePPO model")
         callbacks = CallbackList([
-            EpisodeLoggerCallback(summary_freq=100),
+            EpisodeLoggerCallback(summary_freq=100, live_state_writer=live_writer),
             CheckpointCallback(
                 save_freq=1000,
                 save_path="data/checkpoints/",

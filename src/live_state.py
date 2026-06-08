@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+from collections import Counter
 from datetime import datetime, timezone
 
 from src.game_state import GameState
@@ -29,6 +30,7 @@ class LiveStateWriter:
                 for m in state.monsters
                 if not m.get("is_gone", False)
             ],
+            "deck": self._deck_composition(state),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         self._update("live", live)
@@ -42,6 +44,31 @@ class LiveStateWriter:
             "avg_floor": round(summary.get("avg_floor", 0.0), 1),
         }
         self._update("stats", stats)
+
+    def write_training_step(
+        self,
+        episodes: list[dict],
+        total_episodes: int,
+        total_timesteps: int,
+    ) -> None:
+        self._update("training", {
+            "total_episodes": total_episodes,
+            "total_timesteps": total_timesteps,
+            "episodes": episodes,
+        })
+
+    def _deck_composition(self, state: GameState) -> list[dict]:
+        names = []
+        for c in state.deck:
+            name = c.get("name") or c.get("id", "?")
+            if c.get("upgrades", 0) > 0:
+                name += "+"
+            names.append(name)
+        counts = Counter(names)
+        return sorted(
+            [{"name": n, "count": k} for n, k in counts.items()],
+            key=lambda x: x["name"],
+        )
 
     def _enrich_action(self, state: GameState, action: str) -> str:
         m = re.match(r"^PLAY\s+(\d+)(?:\s+(\d+))?", action)

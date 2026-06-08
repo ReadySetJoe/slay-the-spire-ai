@@ -6,7 +6,7 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-from src.agent import SimpleAgent
+from src.agent import SimpleAgent, StuckDetectorAgent
 from src.communicator import Communicator
 from src.game_state import GameState
 from src.run_tracker import RunTracker
@@ -14,6 +14,8 @@ from src.state_encoder import StateEncoder
 from src.action_space import ActionSpace
 
 logger = logging.getLogger(__name__)
+
+_BASE_MAX_ENERGY = 3  # Ironclad A0 base; update if relic/buff energy tracking is added
 
 
 class CombatEnv(gym.Env):
@@ -25,11 +27,15 @@ class CombatEnv(gym.Env):
 
     def __init__(self, communicator: Communicator,
                  run_tracker: Optional[RunTracker] = None,
-                 scorer=None):
+                 scorer=None,
+                 energy_efficiency_bonus: float = 0.1):
         super().__init__()
         self.communicator = communicator
         self.run_tracker = run_tracker or RunTracker()
-        self.simple_agent = SimpleAgent(scorer=scorer)
+        # _inner_simple_agent: bare agent used for _check_potions (private method,
+        # blocked by StuckDetectorAgent.__getattr__'s underscore guard)
+        self._inner_simple_agent = SimpleAgent(scorer=scorer)
+        self.simple_agent = StuckDetectorAgent(self._inner_simple_agent)
         self.encoder = StateEncoder()
         self._action_space = ActionSpace()
 
@@ -44,6 +50,12 @@ class CombatEnv(gym.Env):
         self._episode_steps: int = 0
         self._buffered_state: Optional[GameState] = None
         self._initialized: bool = False
+        self._energy_efficiency_bonus = energy_efficiency_bonus
+
+    def _write_live(self, state: GameState, action: str) -> None:
+        writer = self.run_tracker.live_state_writer
+        if writer:
+            writer.write(state, action)
 
     def action_masks(self) -> np.ndarray:
         if self._current_state is None:
@@ -71,12 +83,13 @@ class CombatEnv(gym.Env):
         use (extremely rare), otherwise None.
         """
         while "POTION" in self._current_state.available_commands:
-            potion_cmd = self.simple_agent._check_potions(self._current_state)
+            potion_cmd = self._inner_simple_agent._check_potions(self._current_state)
             if not potion_cmd:
                 break
             logger.info("Floor %d | HP %d/%d | Potion: %s",
                         self._current_state.floor, self._current_state.current_hp,
                         self._current_state.max_hp, potion_cmd)
+            self._write_live(self._current_state, potion_cmd)
             self.communicator.send_command(potion_cmd)
             state = self.communicator.receive_state()
             if state is None:
@@ -85,9 +98,18 @@ class CombatEnv(gym.Env):
             if not state.is_in_combat:
                 reward = self._compute_reward(state)
                 obs = self.encoder.encode(self._current_state)
+                info = {
+                    "episode": {
+                        "r": reward,
+                        "l": self._episode_steps,
+                        "hp": state.current_hp,
+                        "max_hp": state.max_hp,
+                        "floor": state.floor,
+                    }
+                }
                 self._current_state = None
                 self._buffered_state = state
-                return obs, reward, True, False, {}
+                return obs, reward, True, False, info
             self._current_state = state
         return None
 
@@ -104,9 +126,9 @@ class CombatEnv(gym.Env):
         return total
 
     def _compute_step_reward(self, prev_hp: int, prev_monster_hp: int,
-                              prev_living: int, prev_debuffs: int,
-                              max_hp: int, action: int,
-                              state: GameState) -> float:
+                              prev_living: int, max_hp: int,
+                              state: GameState, action: int = 0,
+                              prev_energy: int = 0, prev_debuffs: int = 0) -> float:
         new_hp = state.current_hp
         new_monster_hp = sum(
             m.get("current_hp", 0) for m in state.monsters
@@ -122,7 +144,7 @@ class CombatEnv(gym.Env):
 
         energy_waste_penalty = 0.0
         if action == self._action_space.END_TURN_ACTION:
-            energy_waste_penalty = 0.05 * (self._current_state.energy / 3)
+            energy_waste_penalty = 0.05 * (prev_energy / _BASE_MAX_ENERGY)
 
         return damage_dealt - damage_taken + 0.1 * kills + debuff_reward - energy_waste_penalty
 
@@ -145,11 +167,13 @@ class CombatEnv(gym.Env):
         )
         prev_debuffs = self._debuff_stacks(self._current_state.monsters)
         max_hp = self._current_state.max_hp
+        prev_energy = self._current_state.energy
 
         command = self._action_space.action_to_command(action, self._current_state)
         logger.debug("Floor %d | HP %d/%d | action=%s",
                      self._current_state.floor, self._current_state.current_hp,
                      self._current_state.max_hp, command)
+        self._write_live(self._current_state, command)
         self.communicator.send_command(command)
 
         state = self.communicator.receive_state()
@@ -158,9 +182,24 @@ class CombatEnv(gym.Env):
             obs = self.encoder.encode(self._current_state)
             return obs, 0.0, True, False, {}
 
+        # Mid-combat card-selection screens (e.g. Warcry → HAND_SELECT, Headbutt → GRID)
+        # must be resolved by SimpleAgent before the RL agent sees the next observation.
+        while state.is_in_combat and state.screen_type in ("GRID", "HAND_SELECT"):
+            sel_cmd = self.simple_agent.act(state)
+            logger.info("Floor %d | HP %d/%d | Mid-combat %s: %s",
+                        state.floor, state.current_hp, state.max_hp,
+                        state.screen_type, sel_cmd)
+            self._write_live(state, sel_cmd)
+            self.communicator.send_command(sel_cmd)
+            state = self.communicator.receive_state()
+            if state is None:
+                obs = self.encoder.encode(self._current_state)
+                return obs, 0.0, True, False, {}
+
         if state.is_in_combat:
             step_reward = self._compute_step_reward(
-                prev_hp, prev_monster_hp, prev_living, prev_debuffs, max_hp, action, state
+                prev_hp, prev_monster_hp, prev_living, max_hp, state,
+                action, prev_energy, prev_debuffs,
             )
             self._current_state = state
             return self.encoder.encode(state), step_reward, False, False, {}
@@ -197,7 +236,10 @@ class CombatEnv(gym.Env):
         return terminal_obs, reward, True, False, info
 
     def _compute_reward(self, state: GameState) -> float:
-        if state.screen_type == "GAME_OVER" or state.current_hp <= 0:
+        if state.screen_type == "GAME_OVER":
+            victory = (state.screen_state or {}).get("victory", False)
+            return 1.0 if victory else -1.0
+        if state.current_hp <= 0:
             return -1.0
         return state.current_hp / max(state.max_hp, 1)
 
@@ -226,6 +268,10 @@ class CombatEnv(gym.Env):
                 if "START" in state.available_commands:
                     logger.info("Starting new run...")
                     self.communicator.send_command("START IRONCLAD 0")
+                else:
+                    # Game not yet ready to start (loading, menu animation, etc.).
+                    # Send STATE to keep the pipe alive; game will reply when ready.
+                    self.communicator.send_command("STATE")
                 state = None
                 continue
 
@@ -242,11 +288,14 @@ class CombatEnv(gym.Env):
                 continue
 
             if state.is_in_combat:
-                return state
+                if state.screen_type not in ("GRID", "HAND_SELECT"):
+                    return state
+                # Pre-combat selection (e.g. Gambling Chip → HAND_SELECT) falls through to simple_agent
 
             action = self.simple_agent.act(state)
             logger.info("Floor %d | HP %d/%d | Screen: %s | Action: %s",
                         state.floor, state.current_hp, state.max_hp,
                         state.screen_type, action)
+            self._write_live(state, action)
             self.communicator.send_command(action)
             state = None

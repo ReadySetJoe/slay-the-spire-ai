@@ -155,3 +155,102 @@ def test_reset_uses_buffered_state():
     assert comm.receive_state.call_count == 1
     assert env._buffered_state is None
     assert obs.shape == (StateEncoder.OBS_SIZE,)
+
+
+def _combat_energy(energy: int, hp=70, max_hp=80):
+    """Combat state fixture with configurable remaining energy."""
+    return GameState.from_json(json.dumps({
+        "available_commands": ["PLAY", "END"],
+        "ready_for_command": True, "in_game": True,
+        "game_state": {
+            "screen_type": "NONE",
+            "seed": 1, "floor": 1, "ascension_level": 0, "class": "IRONCLAD",
+            "current_hp": hp, "max_hp": max_hp, "gold": 99,
+            "deck": [], "relics": [], "potions": [], "map": [], "act": 1,
+            "combat_state": {
+                "hand": [],
+                "draw_pile": [], "discard_pile": [], "exhaust_pile": [],
+                "monsters": [{"name": "Jaw Worm", "current_hp": 42, "max_hp": 42,
+                               "block": 0, "intent": "ATTACK", "is_gone": False}],
+                "player": {"current_hp": hp, "max_hp": max_hp, "block": 0,
+                            "energy": energy, "powers": []},
+                "turn": 1,
+            },
+        }
+    }))
+
+
+def test_compute_step_reward_end_turn_no_energy_wasted():
+    """Using all energy on END_TURN incurs no penalty."""
+    env = CombatEnv(communicator=MagicMock())
+    post_state = _combat_energy(energy=3, hp=70)
+    reward = env._compute_step_reward(
+        prev_hp=70, prev_monster_hp=42, prev_living=1,
+        max_hp=80, state=post_state,
+        action=ActionSpace.END_TURN_ACTION, prev_energy=0,
+    )
+    assert reward == pytest.approx(0.0)
+
+
+def test_compute_step_reward_end_turn_partial_energy_wasted():
+    """Wasting 1 of 3 energy gives a proportional penalty."""
+    env = CombatEnv(communicator=MagicMock())
+    post_state = _combat_energy(energy=3, hp=70)
+    reward = env._compute_step_reward(
+        prev_hp=70, prev_monster_hp=42, prev_living=1,
+        max_hp=80, state=post_state,
+        action=ActionSpace.END_TURN_ACTION, prev_energy=1,
+    )
+    assert reward == pytest.approx(-0.05 * (1 / 3))
+
+
+def test_compute_step_reward_end_turn_all_energy_wasted():
+    """Wasting all energy gives the full penalty."""
+    env = CombatEnv(communicator=MagicMock())
+    post_state = _combat_energy(energy=3, hp=70)
+    reward = env._compute_step_reward(
+        prev_hp=70, prev_monster_hp=42, prev_living=1,
+        max_hp=80, state=post_state,
+        action=ActionSpace.END_TURN_ACTION, prev_energy=3,
+    )
+    assert reward == pytest.approx(-0.05)
+
+
+def test_compute_step_reward_card_play_no_energy_penalty():
+    """Energy penalty is NOT applied on card play, only on END_TURN."""
+    env = CombatEnv(communicator=MagicMock())
+    post_state = _combat_energy(energy=2, hp=70)
+    reward = env._compute_step_reward(
+        prev_hp=70, prev_monster_hp=42, prev_living=1,
+        max_hp=80, state=post_state,
+        action=0, prev_energy=1,
+    )
+    assert reward == pytest.approx(0.0)
+
+
+def test_step_end_turn_all_energy_used_no_penalty():
+    """Integration: step() captures pre-command energy; no penalty when energy fully spent."""
+    comm = MagicMock()
+    comm.receive_state.return_value = _combat_energy(energy=3, hp=70)
+    env = CombatEnv(communicator=comm)
+    env._current_state = _combat_energy(energy=0, hp=70)  # agent spent all energy
+
+    _, reward, done, _, _ = env.step(ActionSpace.END_TURN_ACTION)
+
+    assert done is False
+    assert reward == pytest.approx(0.0)  # no damage delta, no wasted energy
+
+
+def test_combat_env_wraps_simple_agent_with_stuck_detector():
+    from src.agent import StuckDetectorAgent
+    env = CombatEnv(communicator=MagicMock())
+    assert isinstance(env.simple_agent, StuckDetectorAgent)
+
+
+def test_combat_env_inner_agent_used_for_check_potions():
+    """_inner_simple_agent is the unwrapped SimpleAgent that _apply_potions calls."""
+    from src.agent import SimpleAgent
+    env = CombatEnv(communicator=MagicMock())
+    # _inner_simple_agent must be the unwrapped SimpleAgent stored inside the wrapper
+    assert isinstance(env._inner_simple_agent, SimpleAgent)
+    assert env.simple_agent._agent is env._inner_simple_agent
