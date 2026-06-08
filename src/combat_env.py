@@ -98,9 +98,18 @@ class CombatEnv(gym.Env):
             if not state.is_in_combat:
                 reward = self._compute_reward(state)
                 obs = self.encoder.encode(self._current_state)
+                info = {
+                    "episode": {
+                        "r": reward,
+                        "l": self._episode_steps,
+                        "hp": state.current_hp,
+                        "max_hp": state.max_hp,
+                        "floor": state.floor,
+                    }
+                }
                 self._current_state = None
                 self._buffered_state = state
-                return obs, reward, True, False, {}
+                return obs, reward, True, False, info
             self._current_state = state
         return None
 
@@ -156,6 +165,20 @@ class CombatEnv(gym.Env):
             obs = self.encoder.encode(self._current_state)
             return obs, 0.0, True, False, {}
 
+        # Mid-combat card-selection screens (e.g. Warcry → HAND_SELECT, Headbutt → GRID)
+        # must be resolved by SimpleAgent before the RL agent sees the next observation.
+        while state.is_in_combat and state.screen_type in ("GRID", "HAND_SELECT"):
+            sel_cmd = self.simple_agent.act(state)
+            logger.info("Floor %d | HP %d/%d | Mid-combat %s: %s",
+                        state.floor, state.current_hp, state.max_hp,
+                        state.screen_type, sel_cmd)
+            self._write_live(state, sel_cmd)
+            self.communicator.send_command(sel_cmd)
+            state = self.communicator.receive_state()
+            if state is None:
+                obs = self.encoder.encode(self._current_state)
+                return obs, 0.0, True, False, {}
+
         if state.is_in_combat:
             step_reward = self._compute_step_reward(
                 prev_hp, prev_monster_hp, prev_living, max_hp, state, action, prev_energy
@@ -195,7 +218,10 @@ class CombatEnv(gym.Env):
         return terminal_obs, reward, True, False, info
 
     def _compute_reward(self, state: GameState) -> float:
-        if state.screen_type == "GAME_OVER" or state.current_hp <= 0:
+        if state.screen_type == "GAME_OVER":
+            victory = (state.screen_state or {}).get("victory", False)
+            return 1.0 if victory else -1.0
+        if state.current_hp <= 0:
             return -1.0
         return state.current_hp / max(state.max_hp, 1)
 
@@ -224,6 +250,10 @@ class CombatEnv(gym.Env):
                 if "START" in state.available_commands:
                     logger.info("Starting new run...")
                     self.communicator.send_command("START IRONCLAD 0")
+                else:
+                    # Game not yet ready to start (loading, menu animation, etc.).
+                    # Send STATE to keep the pipe alive; game will reply when ready.
+                    self.communicator.send_command("STATE")
                 state = None
                 continue
 
@@ -240,7 +270,9 @@ class CombatEnv(gym.Env):
                 continue
 
             if state.is_in_combat:
-                return state
+                if state.screen_type not in ("GRID", "HAND_SELECT"):
+                    return state
+                # Pre-combat selection (e.g. Gambling Chip → HAND_SELECT) falls through to simple_agent
 
             action = self.simple_agent.act(state)
             logger.info("Floor %d | HP %d/%d | Screen: %s | Action: %s",

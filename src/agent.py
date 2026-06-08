@@ -60,6 +60,13 @@ class SimpleAgent(Agent):
         self._last_shop_gold = None
 
     def act(self, state: GameState) -> str:
+        # GRID/HAND_SELECT must be checked before is_in_combat: these screens can
+        # appear mid-combat (Warcry → HAND_SELECT, Headbutt → GRID) and
+        # is_in_combat returns True for them, which would otherwise route here to
+        # _handle_combat and send "END" into a card-selection prompt.
+        if state.screen_type in ("GRID", "HAND_SELECT"):
+            return self._handle_grid_hand_select(state)
+
         if state.is_in_combat:
             return self._handle_combat(state)
 
@@ -85,9 +92,6 @@ class SimpleAgent(Agent):
 
         if state.screen_type in ("SHOP_ROOM", "SHOP_SCREEN"):
             return self._handle_shop_screen(state)
-
-        if state.screen_type in ("GRID", "HAND_SELECT"):
-            return self._handle_grid_hand_select(state)
 
         if state.screen_type == "COMBAT_REWARD":
             return self._handle_combat_reward(state)
@@ -261,22 +265,36 @@ class SimpleAgent(Agent):
         return f"CHOOSE {choice}"
 
     def _handle_grid_hand_select(self, state: GameState) -> str:
+        ss = state.screen_state or {}
+        cards = ss.get("cards", [])
+        # CommunicationMod tracks selected cards in a separate array, not as a
+        # boolean on individual card objects. HAND_SELECT uses "selected";
+        # GRID uses "selected_cards".
+        already_selected = {
+            c.get("uuid")
+            for c in ss.get("selected", []) + ss.get("selected_cards", [])
+        }
+        unselected = [
+            (i, c) for i, c in enumerate(cards)
+            if c.get("uuid") not in already_selected
+        ]
+
+        if ss.get("any_number", False):
+            # Optional discard-and-redraw (Gambling Chip): swap D-tier cards only.
+            if "CHOOSE" in state.available_commands:
+                d_tier = [
+                    (i, c) for i, c in unselected
+                    if get_card_tier(c.get("id", "")) == "D"
+                ]
+                if d_tier:
+                    return f"CHOOSE {d_tier[0][0]}"
+            if "CONFIRM" in state.available_commands:
+                return "CONFIRM"
+
+        # Required selection (Warcry → HAND_SELECT, Headbutt → GRID, etc.)
         if "CONFIRM" in state.available_commands:
             return "CONFIRM"
         if "CHOOSE" in state.available_commands:
-            ss = state.screen_state or {}
-            cards = ss.get("cards", [])
-            # CommunicationMod tracks selected cards in a separate array, not as a
-            # boolean on individual card objects. HAND_SELECT uses "selected";
-            # GRID uses "selected_cards".
-            already_selected = {
-                c.get("uuid")
-                for c in ss.get("selected", []) + ss.get("selected_cards", [])
-            }
-            unselected = [
-                (i, c) for i, c in enumerate(cards)
-                if c.get("uuid") not in already_selected
-            ]
             if unselected:
                 best_local = pick_best_card([c for _, c in unselected])
                 best_idx = unselected[best_local if best_local is not None else 0][0]
@@ -447,6 +465,12 @@ class StuckDetectorAgent(Agent):
             if candidate in state.available_commands or candidate == "STATE":
                 cmd = candidate
                 break
+
+        # After emitting STATE, reset the stuck counter so the next state response
+        # gets a fresh fingerprint comparison instead of immediately saturating again.
+        if cmd == "STATE":
+            self._last_fp = None
+            self._seen_count = 0
 
         self._action_history.append(cmd)
         return cmd

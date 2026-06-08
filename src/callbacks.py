@@ -51,7 +51,7 @@ class EpisodeLoggerCallback(BaseCallback):
             recent = list(self._episode_stats)
             avg_r = sum(e["r"] for e in recent) / len(recent)
             avg_l = sum(e["l"] for e in recent) / len(recent)
-            win_rate = sum(1 for e in recent if e["r"] > 0) / len(recent)
+            win_rate = sum(1 for e in recent if e["r"] >= 1.0) / len(recent)
             avg_floor = sum(e.get("floor", 0) for e in recent) / len(recent)
             logger.info(
                 "[Summary ep %d-%d] avg_reward=%.2f | avg_steps=%.1f | win_rate=%.1f%% | avg_floor=%.1f",

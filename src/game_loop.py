@@ -38,6 +38,8 @@ class GameLoop:
             if "START" in state.available_commands:
                 logger.info("Starting new run...")
                 self.communicator.send_command("START IRONCLAD 0")
+            else:
+                self.communicator.send_command("STATE")
             return True
 
         if state.screen_type == "GAME_OVER":
@@ -80,6 +82,8 @@ class GameLoop:
                 if "START" in state.available_commands:
                     logger.info("Starting new run...")
                     self.communicator.send_command("START IRONCLAD 0")
+                else:
+                    self.communicator.send_command("STATE")
                 continue
 
             if state.screen_type == "GAME_OVER":

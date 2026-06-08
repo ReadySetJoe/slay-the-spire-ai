@@ -8,12 +8,29 @@ from src.game_state import GameState
 logger = logging.getLogger(__name__)
 
 
+_GRAPH_REGEN_INTERVAL = 10  # regenerate performance graphs every N runs
+
+
 class RunTracker:
     def __init__(self, log_path: str = "data/run_log.jsonl", live_state_writer=None):
         self.log_path = log_path
         self.live_state_writer = live_state_writer
-        self.run_number = 0
+        self.run_number = self._load_last_run_number()
         self.runs: list[dict] = []
+
+    def _load_last_run_number(self) -> int:
+        try:
+            last_line = None
+            with open(self.log_path) as f:
+                for line in f:
+                    stripped = line.strip()
+                    if stripped:
+                        last_line = stripped
+            if last_line:
+                return json.loads(last_line).get("run_number", 0)
+        except (FileNotFoundError, json.JSONDecodeError, KeyError):
+            pass
+        return 0
 
     def record_run(self, state: GameState) -> dict:
         self.run_number += 1
@@ -40,7 +57,8 @@ class RunTracker:
 
         self.runs.append(record)
         self._write_record(record)
-        self._update_graphs()
+        if self.run_number % _GRAPH_REGEN_INTERVAL == 0:
+            self._update_graphs()
         if self.live_state_writer:
             self.live_state_writer.write_run_summary(self.summary())
 
