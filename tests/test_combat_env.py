@@ -92,7 +92,8 @@ def test_step_continues_combat():
 
     obs, reward, done, truncated, info = env.step(ActionSpace.END_TURN_ACTION)
 
-    assert reward == 0.0
+    # damage_taken=5/80, energy_waste_penalty=0.05*(3/3)
+    assert reward == pytest.approx(-5 / 80 - 0.05)
     assert done == False
     assert truncated == False
     assert obs.shape == (StateEncoder.OBS_SIZE,)

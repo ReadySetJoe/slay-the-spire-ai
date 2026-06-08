@@ -91,8 +91,21 @@ class CombatEnv(gym.Env):
             self._current_state = state
         return None
 
+    @staticmethod
+    def _debuff_stacks(monsters: list) -> int:
+        """Sum of Vulnerable + Weak stacks across all living enemies."""
+        total = 0
+        for m in monsters:
+            if m.get("is_gone", False):
+                continue
+            for p in m.get("powers", []):
+                if p.get("id") in ("Vulnerable", "Weak"):
+                    total += p.get("amount", 0)
+        return total
+
     def _compute_step_reward(self, prev_hp: int, prev_monster_hp: int,
-                              prev_living: int, max_hp: int,
+                              prev_living: int, prev_debuffs: int,
+                              max_hp: int, action: int,
                               state: GameState) -> float:
         new_hp = state.current_hp
         new_monster_hp = sum(
@@ -100,11 +113,18 @@ class CombatEnv(gym.Env):
             if not m.get("is_gone", False)
         )
         new_living = sum(1 for m in state.monsters if not m.get("is_gone", False))
+        new_debuffs = self._debuff_stacks(state.monsters)
 
         damage_dealt = max(prev_monster_hp - new_monster_hp, 0) / max(max_hp, 1)
         damage_taken = max(prev_hp - new_hp, 0) / max(max_hp, 1)
         kills = max(prev_living - new_living, 0)
-        return damage_dealt - damage_taken + 0.1 * kills
+        debuff_reward = 0.05 * max(new_debuffs - prev_debuffs, 0)
+
+        energy_waste_penalty = 0.0
+        if action == self._action_space.END_TURN_ACTION:
+            energy_waste_penalty = 0.05 * (self._current_state.energy / 3)
+
+        return damage_dealt - damage_taken + 0.1 * kills + debuff_reward - energy_waste_penalty
 
     def step(self, action: int):
         assert self._current_state is not None, "Call reset() first"
@@ -123,6 +143,7 @@ class CombatEnv(gym.Env):
         prev_living = sum(
             1 for m in self._current_state.monsters if not m.get("is_gone", False)
         )
+        prev_debuffs = self._debuff_stacks(self._current_state.monsters)
         max_hp = self._current_state.max_hp
 
         command = self._action_space.action_to_command(action, self._current_state)
@@ -139,7 +160,7 @@ class CombatEnv(gym.Env):
 
         if state.is_in_combat:
             step_reward = self._compute_step_reward(
-                prev_hp, prev_monster_hp, prev_living, max_hp, state
+                prev_hp, prev_monster_hp, prev_living, prev_debuffs, max_hp, action, state
             )
             self._current_state = state
             return self.encoder.encode(state), step_reward, False, False, {}
