@@ -81,12 +81,12 @@ class RunEncoder:
         # [0:8] player stats
         obs[0] = state.current_hp / max_hp
         obs[1] = min(max_hp / 400, 1.0)
-        obs[2] = state.floor / 55
+        obs[2] = min(state.floor / 55, 1.0)
         obs[3] = min(state.gold / 999, 1.0)
-        obs[4] = state.act / 3
+        obs[4] = min(state.act / 3, 1.0)
         obs[5] = state.ascension_level / 20
-        obs[6] = state.energy / 4
-        obs[7] = state.player_block / max_hp
+        obs[6] = min(state.energy / 4, 1.0)
+        obs[7] = min(state.player_block / max_hp, 1.0)
 
         # [8:16] deck composition
         deck = state.deck

@@ -136,7 +136,7 @@ class RunEnv(gym.Env):
             max_hp           = prev.max_hp,
             is_end_action    = (action == RunActionSpace.END_TURN),
             energy_remaining = prev.energy,
-            max_energy       = 3,
+            max_energy       = 4,
             card_is_attack   = self._played_card_is_attack(action, prev),
             debuff_applied_this_turn = self._debuff_applied_this_turn,
         )

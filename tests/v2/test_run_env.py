@@ -103,8 +103,8 @@ def test_step_end_with_energy_waste_penalty(env):
 
     _, reward, done, _, _ = env.step(60)  # END
 
-    # energy_waste = 3/3 → penalty = -0.3 * 1.0
-    assert reward == pytest.approx(-0.3)
+    # energy_waste = 3/4 → penalty = -0.3 * 0.75 (max_energy=4 to match encoder)
+    assert reward == pytest.approx(-0.3 * 0.75)
 
 
 def test_step_sends_correct_command(env):

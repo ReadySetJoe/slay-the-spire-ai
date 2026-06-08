@@ -17,12 +17,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _latest_checkpoint(checkpoint_dir: str) -> "tuple[str, int] | None":
+def _latest_checkpoint(checkpoint_dir: str, prefix: str = "combat") -> "tuple[str, int] | None":
     """Return (path, step_count) of the highest-step checkpoint file, or None."""
-    files = glob.glob(os.path.join(checkpoint_dir, "combat_*_steps.zip"))
+    files = glob.glob(os.path.join(checkpoint_dir, f"{prefix}_*_steps.zip"))
     best_path, best_steps = None, -1
     for f in files:
-        m = re.search(r"combat_(\d+)_steps\.zip$", f)
+        m = re.search(rf"{re.escape(prefix)}_(\d+)_steps\.zip$", f)
         if m:
             steps = int(m.group(1))
             if steps > best_steps:
@@ -30,12 +30,12 @@ def _latest_checkpoint(checkpoint_dir: str) -> "tuple[str, int] | None":
     return (best_path, best_steps) if best_path else None
 
 
-def _load_model(model_path: str, checkpoint_dir: str, env):
+def _load_model(model_path: str, checkpoint_dir: str, env, prefix: str = "combat"):
     """Load the most recent model: prefers whichever of the final save or
     latest checkpoint has the newer modification time."""
     from sb3_contrib import MaskablePPO
 
-    latest = _latest_checkpoint(checkpoint_dir)
+    latest = _latest_checkpoint(checkpoint_dir, prefix=prefix)
     has_final = os.path.exists(model_path)
 
     if latest and has_final:
@@ -86,7 +86,7 @@ def main():
         checkpoint_dir = "data/v2_checkpoints"
         os.makedirs(checkpoint_dir, exist_ok=True)
 
-        model = _load_model(model_path, checkpoint_dir, env)
+        model = _load_model(model_path, checkpoint_dir, env, prefix="v2_run")
         if model is None:
             model = MaskablePPO(
                 "MlpPolicy", env,
