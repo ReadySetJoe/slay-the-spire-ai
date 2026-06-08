@@ -53,4 +53,85 @@ class RunActionSpace:
         raise ValueError(f"Invalid action index {action}")
 
     def get_action_mask(self, state: GameState) -> np.ndarray:
-        raise NotImplementedError
+        mask = np.zeros(TOTAL_ACTIONS, dtype=np.bool_)
+
+        if state.is_in_combat:
+            self._mask_combat(mask, state)
+            return mask
+
+        screen = state.screen_type
+        cmds   = state.available_commands
+        ss     = state.screen_state or {}
+
+        if screen == "CARD_REWARD":
+            n = len(ss.get("cards", []))
+            for i in range(min(n, MAX_CHOICES)):
+                mask[_CHOOSE_START + i] = True
+            if "PROCEED" in cmds:
+                mask[_PROCEED] = True
+
+        elif screen == "SHOP_SCREEN":
+            n = len(ss.get("cards", [])) + len(ss.get("relics", []))
+            for i in range(min(n, MAX_CHOICES)):
+                mask[_CHOOSE_START + i] = True
+            if "PURGE" in cmds:
+                mask[_PURGE] = True
+            mask[_PROCEED] = True
+
+        elif screen == "MAP":
+            n = len(ss.get("next_nodes", []))
+            for i in range(min(n, MAX_CHOICES)):
+                mask[_CHOOSE_START + i] = True
+
+        elif screen == "REST":
+            if "CHOOSE" in cmds:
+                mask[_CHOOSE_REST]  = True
+                mask[_CHOOSE_SMITH] = True
+
+        elif screen == "CHEST":
+            if "OPEN"    in cmds: mask[_OPEN]    = True
+            if "PROCEED" in cmds: mask[_PROCEED] = True
+
+        elif screen in ("EVENT", "GRID", "HAND_SELECT",
+                        "COMBAT_REWARD", "BOSS_REWARD"):
+            if "CHOOSE" in cmds:
+                options = (ss.get("options") or ss.get("cards") or
+                           ss.get("rewards") or [])
+                n = min(len(options), MAX_CHOICES) if options else MAX_CHOICES
+                for i in range(n):
+                    mask[_CHOOSE_START + i] = True
+            if "PROCEED" in cmds:
+                mask[_PROCEED] = True
+
+        elif screen == "SHOP_ROOM":
+            mask[_PROCEED] = True
+
+        else:
+            if "PROCEED" in cmds:
+                mask[_PROCEED] = True
+
+        return mask
+
+    def _mask_combat(self, mask: np.ndarray, state: GameState) -> None:
+        mask[_END_TURN] = True
+
+        living = {i for i, m in enumerate(state.monsters[:MAX_TARGETS])
+                  if not m.get("is_gone", False)}
+
+        for slot, card in enumerate(state.hand[:MAX_HAND]):
+            if not card.get("is_playable", False):
+                continue
+            if card.get("has_target", False):
+                for t in living:
+                    mask[_PLAY_T_START + slot * MAX_TARGETS + t] = True
+            else:
+                mask[_PLAY_NT_START + slot] = True
+
+        for slot, potion in enumerate(state.potions[:MAX_POTIONS]):
+            if not potion.get("can_use", False):
+                continue
+            if potion.get("requires_target", False):
+                for t in living:
+                    mask[_POT_T_START + slot * MAX_TARGETS + t] = True
+            else:
+                mask[_POT_NT_START + slot] = True
