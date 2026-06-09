@@ -202,3 +202,40 @@ def test_map_enables_node_choices(space):
     assert mask[92] is np.bool_(True)   # CHOOSE 1
     assert mask[93] is np.bool_(True)   # CHOOSE 2
     assert mask[94] is np.bool_(False)  # CHOOSE 3 — no 4th node
+
+
+def _make_combat_reward(potions):
+    rewards = [
+        {"reward_type": "GOLD", "gold": 15},
+        {"reward_type": "POTION", "potion": {"id": "Fire Potion"}},
+        {"reward_type": "CARD"},
+    ]
+    return make_state(
+        screen_type="COMBAT_REWARD",
+        available_commands=["CHOOSE", "PROCEED"],
+        potions=potions,
+        screen_state={"rewards": rewards},
+        combat=False,
+    )
+
+
+def test_combat_reward_potion_enabled_when_slot_available(space):
+    state = _make_combat_reward(potions=[{"id": "Potion Slot"}])
+    mask = space.get_action_mask(state)
+    assert mask[91] is np.bool_(True)   # CHOOSE 0 — gold
+    assert mask[92] is np.bool_(True)   # CHOOSE 1 — potion (slot free)
+    assert mask[93] is np.bool_(True)   # CHOOSE 2 — card
+    assert mask[99] is np.bool_(True)   # PROCEED
+
+
+def test_combat_reward_potion_skipped_when_full(space):
+    full_potions = [
+        {"id": "Fire Potion"},
+        {"id": "Block Potion"},
+    ]
+    state = _make_combat_reward(potions=full_potions)
+    mask = space.get_action_mask(state)
+    assert mask[91] is np.bool_(True)   # CHOOSE 0 — gold still enabled
+    assert mask[92] is np.bool_(False)  # CHOOSE 1 — potion blocked (belt full)
+    assert mask[93] is np.bool_(True)   # CHOOSE 2 — card still enabled
+    assert mask[99] is np.bool_(True)   # PROCEED

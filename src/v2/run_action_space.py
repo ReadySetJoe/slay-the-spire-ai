@@ -92,8 +92,19 @@ class RunActionSpace:
             if "OPEN"    in cmds: mask[_OPEN]    = True
             if "PROCEED" in cmds: mask[_PROCEED] = True
 
-        elif screen in ("EVENT", "GRID", "HAND_SELECT",
-                        "COMBAT_REWARD", "BOSS_REWARD"):
+        elif screen == "COMBAT_REWARD":
+            if "PROCEED" in cmds:
+                mask[_PROCEED] = True
+            if "CHOOSE" in cmds:
+                rewards = ss.get("rewards", [])
+                potion_full = all(p.get("id") != "Potion Slot"
+                                  for p in state.potions)
+                for i, reward in enumerate(rewards[:MAX_CHOICES]):
+                    if reward.get("reward_type") == "POTION" and potion_full:
+                        continue
+                    mask[_CHOOSE_START + i] = True
+
+        elif screen in ("EVENT", "GRID", "HAND_SELECT", "BOSS_REWARD"):
             if "CHOOSE" in cmds:
                 options = (ss.get("options") or ss.get("cards") or
                            ss.get("rewards") or [])

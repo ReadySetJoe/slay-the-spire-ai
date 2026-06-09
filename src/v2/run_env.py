@@ -237,6 +237,23 @@ class RunEnv(gym.Env):
             if action == 102:  # CHOOSE smith
                 return self.reward_shaper.rest_smith_reward()
 
+        if screen == "CHEST" and action == 103:  # OPEN
+            return self.reward_shaper.open_chest_reward()
+
+        if screen == "COMBAT_REWARD" and 91 <= action <= 98:
+            idx = action - 91
+            rewards = ss.get("rewards", [])
+            if idx < len(rewards):
+                reward_type = rewards[idx].get("reward_type", "")
+                if reward_type == "RELIC":
+                    return self.reward_shaper.combat_relic_reward()
+                if reward_type == "POTION":
+                    return self.reward_shaper.combat_potion_reward()
+            return 0.0
+
+        if screen == "BOSS_REWARD" and 91 <= action <= 98:
+            return self.reward_shaper.boss_relic_reward()
+
         return 0.0
 
     def _handle_game_over(self, prev: GameState, state: GameState):

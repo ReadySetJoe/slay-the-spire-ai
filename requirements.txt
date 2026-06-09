@@ -1,4 +1,5 @@
 pytest>=7.0
+flask>=3.0
 stable-baselines3>=2.1
 sb3-contrib>=2.1
 gymnasium>=0.29

@@ -76,6 +76,18 @@ class RunRewardShaper:
     def rest_smith_reward(self) -> float:
         return 0.05
 
+    def open_chest_reward(self) -> float:
+        return 0.07
+
+    def combat_relic_reward(self) -> float:
+        return 0.05
+
+    def combat_potion_reward(self) -> float:
+        return 0.03
+
+    def boss_relic_reward(self) -> float:
+        return 0.10
+
     def _synergy(self, card_id: str, deck: list) -> float:
         props    = get_card_properties(card_id)
         deck_ids = [c.get("id", "") for c in deck]

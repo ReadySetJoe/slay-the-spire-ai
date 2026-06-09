@@ -713,7 +713,7 @@ if __name__ == "__main__":
     LIVE_STATE_PATH = os.path.join(data_dir, "live_state.json")
     RUN_LOG_PATH    = os.path.join(data_dir, "run_log.jsonl")
 
-    base = "http://localhost:5000"
+    base = "http://localhost:5001"
     print(f"Reading from: {os.path.abspath(data_dir)}")
     print()
     print("── OBS overlay endpoints ──────────────────────────")
@@ -728,4 +728,4 @@ if __name__ == "__main__":
     print()
     print(f"  API                {base}/api/runs  {base}/api/state")
     print("────────────────────────────────────────────────────")
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5001, debug=False)
