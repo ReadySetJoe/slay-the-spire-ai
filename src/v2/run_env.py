@@ -98,6 +98,9 @@ class RunEnv(gym.Env):
         logger.info("Floor %d | HP %d/%d | Screen: %s | Action: %s",
                     prev.floor, prev.current_hp, prev.max_hp,
                     prev.screen_type, command)
+        writer = self.run_tracker.live_state_writer
+        if writer:
+            writer.write(prev, command)
         self.communicator.send_command(command)
 
         state = self.communicator.receive_state()
@@ -237,8 +240,11 @@ class RunEnv(gym.Env):
             if action == 102:  # CHOOSE smith
                 return self.reward_shaper.rest_smith_reward()
 
-        if screen == "CHEST" and action == 103:  # OPEN
-            return self.reward_shaper.open_chest_reward()
+        if screen == "CHEST":
+            if action == 103:  # OPEN
+                return self.reward_shaper.open_chest_reward()
+            if action == 91:  # CHOOSE 0 - take the relic
+                return self.reward_shaper.combat_relic_reward()
 
         if screen == "COMBAT_REWARD" and 91 <= action <= 98:
             idx = action - 91

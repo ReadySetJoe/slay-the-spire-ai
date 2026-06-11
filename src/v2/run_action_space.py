@@ -89,8 +89,9 @@ class RunActionSpace:
                 mask[_CHOOSE_SMITH] = True
 
         elif screen == "CHEST":
-            if "OPEN"    in cmds: mask[_OPEN]    = True
-            if "PROCEED" in cmds: mask[_PROCEED] = True
+            if "OPEN"    in cmds: mask[_OPEN]          = True
+            if "CHOOSE"  in cmds: mask[_CHOOSE_START]  = True  # CHOOSE 0 takes the relic after opening
+            if "PROCEED" in cmds: mask[_PROCEED]        = True
 
         elif screen == "COMBAT_REWARD":
             if "PROCEED" in cmds:
