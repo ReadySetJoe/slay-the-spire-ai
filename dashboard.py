@@ -159,7 +159,7 @@ async function poll() {{
     const v1 = runs.filter(r=>(r.version||"v1")==="v1");
     const v2 = runs.filter(r=>(r.version||"v1")==="v2");
     const v2Max = v2.length ? Math.max(...v2.map(r=>r.run_number)) : 0;
-    const xMax = Math.max(v2Max+5, runs.length+2, 20);
+    const xMax = v2.length + 20;
     const v1Dots = v1.map(r=>({{ x:r.run_number, y:r.floor_reached }}));
     const v2Dots = v2.map(r=>({{ x:r.run_number, y:r.floor_reached }}));
     const v1Colors = v1.map(r=>r.result==="win"?"rgba(255,215,0,0.85)":"rgba(130,130,160,0.55)");

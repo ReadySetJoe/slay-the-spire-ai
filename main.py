@@ -17,42 +17,54 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _latest_checkpoint(checkpoint_dir: str, prefix: str = "combat") -> "tuple[str, int] | None":
-    """Return (path, step_count) of the highest-step checkpoint file, or None."""
+def _all_checkpoints(checkpoint_dir: str, prefix: str = "combat") -> "list[tuple[str, int]]":
+    """Return (path, step_count) pairs for all valid checkpoint files, sorted descending by step."""
     files = glob.glob(os.path.join(checkpoint_dir, f"{prefix}_*_steps.zip"))
-    best_path, best_steps = None, -1
+    results = []
     for f in files:
         m = re.search(rf"{re.escape(prefix)}_(\d+)_steps\.zip$", f)
         if m:
-            steps = int(m.group(1))
-            if steps > best_steps:
-                best_steps, best_path = steps, f
-    return (best_path, best_steps) if best_path else None
+            results.append((f, int(m.group(1))))
+    results.sort(key=lambda x: x[1], reverse=True)
+    return results
 
 
 def _load_model(model_path: str, checkpoint_dir: str, env, prefix: str = "combat"):
     """Load the most recent model: prefers whichever of the final save or
-    latest checkpoint has the newer modification time."""
+    latest valid checkpoint has the newer modification time.
+    Skips checkpoints that are corrupt (truncated mid-write)."""
+    import zipfile
     from sb3_contrib import MaskablePPO
 
-    latest = _latest_checkpoint(checkpoint_dir, prefix=prefix)
+    def _try_load_checkpoint(path, steps):
+        try:
+            zipfile.ZipFile(path).close()
+        except zipfile.BadZipFile:
+            logger.warning("Skipping corrupt checkpoint %s (bad zip)", path)
+            return None
+        model = MaskablePPO.load(path, env=env)
+        logger.info("Resumed from checkpoint %s (%d steps)", path, steps)
+        return model
+
+    checkpoints = _all_checkpoints(checkpoint_dir, prefix=prefix)
     has_final = os.path.exists(model_path)
 
-    if latest and has_final:
-        ckpt_path, ckpt_steps = latest
+    if checkpoints and has_final:
+        ckpt_path, ckpt_steps = checkpoints[0]
         if os.path.getmtime(ckpt_path) > os.path.getmtime(model_path):
-            model = MaskablePPO.load(ckpt_path, env=env)
-            logger.info("Resumed from checkpoint %s (%d steps)", ckpt_path, ckpt_steps)
-        else:
-            model = MaskablePPO.load(model_path, env=env)
-            logger.info("Loaded final model from %s", model_path)
+            for ckpt_path, ckpt_steps in checkpoints:
+                model = _try_load_checkpoint(ckpt_path, ckpt_steps)
+                if model is not None:
+                    return model
+        model = MaskablePPO.load(model_path, env=env)
+        logger.info("Loaded final model from %s", model_path)
         return model
 
-    if latest:
-        ckpt_path, ckpt_steps = latest
-        model = MaskablePPO.load(ckpt_path, env=env)
-        logger.info("Resumed from checkpoint %s (%d steps)", ckpt_path, ckpt_steps)
-        return model
+    if checkpoints:
+        for ckpt_path, ckpt_steps in checkpoints:
+            model = _try_load_checkpoint(ckpt_path, ckpt_steps)
+            if model is not None:
+                return model
 
     if has_final:
         model = MaskablePPO.load(model_path, env=env)
