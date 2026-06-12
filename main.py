@@ -29,12 +29,17 @@ def _all_checkpoints(checkpoint_dir: str, prefix: str = "combat") -> "list[tuple
     return results
 
 
-def _load_model(model_path: str, checkpoint_dir: str, env, prefix: str = "combat"):
+def _load_model(model_path: str, checkpoint_dir: str, env, prefix: str = "combat", model_class=None):
     """Load the most recent model: prefers whichever of the final save or
     latest valid checkpoint has the newer modification time.
-    Skips checkpoints that are corrupt (truncated mid-write)."""
+    Skips checkpoints that are corrupt (truncated mid-write).
+
+    model_class: SB3 algorithm class to use for loading (default: MaskablePPO).
+    """
     import zipfile
-    from sb3_contrib import MaskablePPO
+    if model_class is None:
+        from sb3_contrib import MaskablePPO
+        model_class = MaskablePPO
 
     def _try_load_checkpoint(path, steps):
         try:
@@ -42,7 +47,7 @@ def _load_model(model_path: str, checkpoint_dir: str, env, prefix: str = "combat
         except zipfile.BadZipFile:
             logger.warning("Skipping corrupt checkpoint %s (bad zip)", path)
             return None
-        model = MaskablePPO.load(path, env=env)
+        model = model_class.load(path, env=env)
         logger.info("Resumed from checkpoint %s (%d steps)", path, steps)
         return model
 
@@ -56,7 +61,7 @@ def _load_model(model_path: str, checkpoint_dir: str, env, prefix: str = "combat
                 model = _try_load_checkpoint(ckpt_path, ckpt_steps)
                 if model is not None:
                     return model
-        model = MaskablePPO.load(model_path, env=env)
+        model = model_class.load(model_path, env=env)
         logger.info("Loaded final model from %s", model_path)
         return model
 
@@ -67,7 +72,7 @@ def _load_model(model_path: str, checkpoint_dir: str, env, prefix: str = "combat
                 return model
 
     if has_final:
-        model = MaskablePPO.load(model_path, env=env)
+        model = model_class.load(model_path, env=env)
         logger.info("Loaded final model from %s", model_path)
         return model
 
@@ -149,10 +154,8 @@ def main():
         checkpoint_dir = "data/v3_checkpoints"
         os.makedirs(checkpoint_dir, exist_ok=True)
 
-        if os.path.exists(model_path):
-            logger.info("Loading existing v3 model from %s", model_path)
-            model = RecurrentPPO.load(model_path, env=env)
-        else:
+        model = _load_model(model_path, checkpoint_dir, env, prefix="v3_run", model_class=RecurrentPPO)
+        if model is None:
             logger.info("Creating new v3 RecurrentPPO model (MlpLstmPolicy)")
             model = RecurrentPPO(
                 "MlpLstmPolicy",
