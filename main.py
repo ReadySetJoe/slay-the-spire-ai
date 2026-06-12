@@ -142,7 +142,7 @@ def main():
         from src.v3.card_scorer import CardScorer as V3CardScorer
         from src.callbacks import EpisodeLoggerCallback
 
-        card_scorer = V3CardScorer(path="data/card_scores.json")
+        card_scorer = V3CardScorer(path="data/v3_card_scores.json")
         env = V3RunEnv(
             communicator=communicator,
             run_tracker=tracker,
@@ -168,7 +168,6 @@ def main():
                 gae_lambda=0.95,
                 learning_rate=3e-4,
                 policy_kwargs={"lstm_hidden_size": 256},
-                tensorboard_log="data/v3_tensorboard/",
             )
 
         callbacks = CallbackList([
