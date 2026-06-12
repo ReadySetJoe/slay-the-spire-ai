@@ -32,7 +32,9 @@ class RunTracker:
             pass
         return 0
 
-    def record_run(self, state: GameState) -> dict:
+    def record_run(self, state: GameState, version: str = "v1",
+                   episode_reward: "float | None" = None,
+                   energy_efficiency: "float | None" = None) -> dict:
         self.run_number += 1
 
         victory = False
@@ -53,6 +55,9 @@ class RunTracker:
             "deck_size": len(state.deck),
             "relic_count": len(state.relics),
             "act": state.act,
+            "version": version,
+            "episode_reward": episode_reward,
+            "energy_efficiency": energy_efficiency,
         }
 
         self.runs.append(record)

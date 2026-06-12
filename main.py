@@ -17,12 +17,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _latest_checkpoint(checkpoint_dir: str) -> "tuple[str, int] | None":
+def _latest_checkpoint(checkpoint_dir: str, prefix: str = "combat") -> "tuple[str, int] | None":
     """Return (path, step_count) of the highest-step checkpoint file, or None."""
-    files = glob.glob(os.path.join(checkpoint_dir, "combat_*_steps.zip"))
+    files = glob.glob(os.path.join(checkpoint_dir, f"{prefix}_*_steps.zip"))
     best_path, best_steps = None, -1
     for f in files:
-        m = re.search(r"combat_(\d+)_steps\.zip$", f)
+        m = re.search(rf"{re.escape(prefix)}_(\d+)_steps\.zip$", f)
         if m:
             steps = int(m.group(1))
             if steps > best_steps:
@@ -30,12 +30,12 @@ def _latest_checkpoint(checkpoint_dir: str) -> "tuple[str, int] | None":
     return (best_path, best_steps) if best_path else None
 
 
-def _load_model(model_path: str, checkpoint_dir: str, env):
+def _load_model(model_path: str, checkpoint_dir: str, env, prefix: str = "combat"):
     """Load the most recent model: prefers whichever of the final save or
     latest checkpoint has the newer modification time."""
     from sb3_contrib import MaskablePPO
 
-    latest = _latest_checkpoint(checkpoint_dir)
+    latest = _latest_checkpoint(checkpoint_dir, prefix=prefix)
     has_final = os.path.exists(model_path)
 
     if latest and has_final:
@@ -63,6 +63,7 @@ def _load_model(model_path: str, checkpoint_dir: str, env):
 
 
 def main():
+    use_v2 = "--v2" in sys.argv
     use_rl = "--rl" in sys.argv
 
     from src.live_state import LiveStateWriter
@@ -74,7 +75,50 @@ def main():
     from src.card_scorer import CardScorer
     scorer = CardScorer(path="data/card_scores.json")
 
-    if use_rl:
+    if use_v2:
+        from sb3_contrib import MaskablePPO
+        from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback
+        from src.v2.run_env import RunEnv
+        from src.callbacks import EpisodeLoggerCallback
+
+        env = RunEnv(communicator=communicator, run_tracker=tracker)
+        model_path     = "data/v2_run_model.zip"
+        checkpoint_dir = "data/v2_checkpoints"
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        model = _load_model(model_path, checkpoint_dir, env, prefix="v2_run")
+        if model is None:
+            model = MaskablePPO(
+                "MlpPolicy", env,
+                learning_rate=3e-4,
+                n_steps=2048,
+                batch_size=64,
+                n_epochs=10,
+                verbose=1,
+            )
+            logger.info("Created new v2 MaskablePPO model")
+
+        callbacks = CallbackList([
+            EpisodeLoggerCallback(summary_freq=10),
+            CheckpointCallback(
+                save_freq=100,
+                save_path=checkpoint_dir,
+                name_prefix="v2_run",
+                verbose=1,
+            ),
+        ])
+
+        logger.info("Starting v2 RL training (MaskablePPO, full-run episodes)...")
+        try:
+            model.learn(total_timesteps=10_000_000, callback=callbacks)
+            logger.info("Training complete.")
+        except KeyboardInterrupt:
+            logger.info("Training interrupted.")
+        finally:
+            model.save(model_path)
+            logger.info("Model saved to %s", model_path)
+
+    elif use_rl:
         from sb3_contrib import MaskablePPO
         from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback
         from src.combat_env import CombatEnv

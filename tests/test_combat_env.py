@@ -92,7 +92,8 @@ def test_step_continues_combat():
 
     obs, reward, done, truncated, info = env.step(ActionSpace.END_TURN_ACTION)
 
-    assert reward == pytest.approx(-5 / 80)
+    # damage_taken=5/80, energy_waste_penalty=0.05*(3/3)
+    assert reward == pytest.approx(-5 / 80 - 0.05)
     assert done == False
     assert truncated == False
     assert obs.shape == (StateEncoder.OBS_SIZE,)
@@ -179,20 +180,20 @@ def _combat_energy(energy: int, hp=70, max_hp=80):
     }))
 
 
-def test_compute_step_reward_end_turn_full_energy_used():
-    """Using all energy (leftover=0) gives the full bonus."""
+def test_compute_step_reward_end_turn_no_energy_wasted():
+    """Using all energy on END_TURN incurs no penalty."""
     env = CombatEnv(communicator=MagicMock())
-    post_state = _combat_energy(energy=3, hp=70)  # same hp, no damage exchanged
+    post_state = _combat_energy(energy=3, hp=70)
     reward = env._compute_step_reward(
         prev_hp=70, prev_monster_hp=42, prev_living=1,
         max_hp=80, state=post_state,
         action=ActionSpace.END_TURN_ACTION, prev_energy=0,
     )
-    assert reward == pytest.approx(0.1)
+    assert reward == pytest.approx(0.0)
 
 
-def test_compute_step_reward_end_turn_partial_energy_used():
-    """Using 2 of 3 energy gives a proportionally smaller bonus."""
+def test_compute_step_reward_end_turn_partial_energy_wasted():
+    """Wasting 1 of 3 energy gives a proportional penalty."""
     env = CombatEnv(communicator=MagicMock())
     post_state = _combat_energy(energy=3, hp=70)
     reward = env._compute_step_reward(
@@ -200,11 +201,11 @@ def test_compute_step_reward_end_turn_partial_energy_used():
         max_hp=80, state=post_state,
         action=ActionSpace.END_TURN_ACTION, prev_energy=1,
     )
-    assert reward == pytest.approx(0.1 * (1 - 1 / 3))
+    assert reward == pytest.approx(-0.05 * (1 / 3))
 
 
-def test_compute_step_reward_end_turn_no_energy_used():
-    """Wasting all energy gives no bonus."""
+def test_compute_step_reward_end_turn_all_energy_wasted():
+    """Wasting all energy gives the full penalty."""
     env = CombatEnv(communicator=MagicMock())
     post_state = _combat_energy(energy=3, hp=70)
     reward = env._compute_step_reward(
@@ -212,14 +213,13 @@ def test_compute_step_reward_end_turn_no_energy_used():
         max_hp=80, state=post_state,
         action=ActionSpace.END_TURN_ACTION, prev_energy=3,
     )
-    assert reward == pytest.approx(0.0)
+    assert reward == pytest.approx(-0.05)
 
 
-def test_compute_step_reward_card_play_no_energy_bonus():
-    """Energy bonus is NOT applied on card play, only on END_TURN."""
+def test_compute_step_reward_card_play_no_energy_penalty():
+    """Energy penalty is NOT applied on card play, only on END_TURN."""
     env = CombatEnv(communicator=MagicMock())
     post_state = _combat_energy(energy=2, hp=70)
-    # action=0 is a card-play action (not END_TURN_ACTION=60)
     reward = env._compute_step_reward(
         prev_hp=70, prev_monster_hp=42, prev_living=1,
         max_hp=80, state=post_state,
@@ -228,29 +228,17 @@ def test_compute_step_reward_card_play_no_energy_bonus():
     assert reward == pytest.approx(0.0)
 
 
-def test_energy_efficiency_bonus_configurable():
-    """energy_efficiency_bonus constructor param overrides the default weight."""
-    env = CombatEnv(communicator=MagicMock(), energy_efficiency_bonus=0.2)
-    post_state = _combat_energy(energy=3, hp=70)
-    reward = env._compute_step_reward(
-        prev_hp=70, prev_monster_hp=42, prev_living=1,
-        max_hp=80, state=post_state,
-        action=ActionSpace.END_TURN_ACTION, prev_energy=0,
-    )
-    assert reward == pytest.approx(0.2)
-
-
-def test_step_end_turn_with_zero_energy_applies_bonus():
-    """Integration: step() captures pre-command energy and applies bonus."""
+def test_step_end_turn_all_energy_used_no_penalty():
+    """Integration: step() captures pre-command energy; no penalty when energy fully spent."""
     comm = MagicMock()
-    comm.receive_state.return_value = _combat_energy(energy=3, hp=70)  # post-turn energy reset
+    comm.receive_state.return_value = _combat_energy(energy=3, hp=70)
     env = CombatEnv(communicator=comm)
     env._current_state = _combat_energy(energy=0, hp=70)  # agent spent all energy
 
     _, reward, done, _, _ = env.step(ActionSpace.END_TURN_ACTION)
 
     assert done is False
-    assert reward == pytest.approx(0.1)  # no damage delta + full energy bonus
+    assert reward == pytest.approx(0.0)  # no damage delta, no wasted energy
 
 
 def test_combat_env_wraps_simple_agent_with_stuck_detector():
