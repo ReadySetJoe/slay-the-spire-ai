@@ -17,6 +17,12 @@ class RunTracker:
         self.live_state_writer = live_state_writer
         self.run_number = self._load_last_run_number()
         self.runs: list[dict] = []
+        self.hung_count: int = 0
+
+    def record_hung(self) -> None:
+        """Record a hung episode (no game response within timeout). Not a real run."""
+        self.hung_count += 1
+        logger.warning("Hung episode recorded (total: %d)", self.hung_count)
 
     def _load_last_run_number(self) -> int:
         try:
