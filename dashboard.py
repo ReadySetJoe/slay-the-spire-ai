@@ -25,6 +25,17 @@ _CSS = """
     letter-spacing: 0.05em;
     margin-bottom: 16px;
   }
+  .chips { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+  .chip {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    padding: 7px 13px;
+    min-width: 64px;
+    text-align: center;
+  }
+  .chip-label { font-size: 10px; letter-spacing: 0.12em; color: #a8a8b3; margin-bottom: 3px; }
+  .chip-value { font-size: 20px; font-weight: bold; color: #e0e0e0; }
   .divider { border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 14px 0; }
   .muted { color: #a8a8b3; }
   .gold  { color: #ffd700; }
@@ -57,6 +68,28 @@ _STATS_HTML = f"""<!DOCTYPE html>
 </style></head>
 <body><div class="panel outer">
   <div class="title">RUN STATS</div>
+  <div class="chips">
+    <div class="chip">
+      <div class="chip-label">RUNS</div>
+      <div class="chip-value gold" id="run-number">—</div>
+    </div>
+    <div class="chip">
+      <div class="chip-label">WIN %</div>
+      <div class="chip-value green" id="win-rate">—</div>
+    </div>
+    <div class="chip">
+      <div class="chip-label">WINS</div>
+      <div class="chip-value green" id="wins-count">—</div>
+    </div>
+    <div class="chip">
+      <div class="chip-label">LOSSES</div>
+      <div class="chip-value red" id="losses-count">—</div>
+    </div>
+    <div class="chip">
+      <div class="chip-label">HUNG</div>
+      <div class="chip-value orange" id="hung-count">—</div>
+    </div>
+  </div>
   <div class="versions">
     <div class="v-block">
       <div class="v-label">V1 · CLASSIC</div>
@@ -94,6 +127,17 @@ async function poll() {{
     const sData = await sResp.json();
     const runs = rData.runs || [];
     const v1 = stats(runs, "v1"), v2 = stats(runs, "v2");
+    // overall chips
+    const allWins = v1.wins + v2.wins;
+    const allLoss = v1.losses + v2.losses;
+    const allRuns = v1.runs + v2.runs;
+    const allWr   = allRuns ? allWins / allRuns : 0;
+    document.getElementById("run-number").textContent   = allRuns || "—";
+    document.getElementById("win-rate").textContent     = allRuns ? Math.round(allWr*100)+"%" : "—";
+    document.getElementById("wins-count").textContent   = allWins;
+    document.getElementById("losses-count").textContent = allLoss;
+    document.getElementById("hung-count").textContent   = sData.stats?.hung ?? "—";
+    // per-version rows
     document.getElementById("v1-runs").textContent = v1.runs || "—";
     document.getElementById("v1-wr").textContent   = v1.runs ? Math.round(v1.wr*100)+"%" : "—";
     document.getElementById("v1-fl").textContent   = v1.runs ? v1.avgFl.toFixed(1) : "—";
