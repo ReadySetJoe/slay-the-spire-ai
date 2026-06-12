@@ -130,6 +130,64 @@ def main():
             model.save(model_path)
             logger.info("Model saved to %s", model_path)
 
+    elif "--v3" in sys.argv:
+        from sb3_contrib import RecurrentPPO
+        from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback
+        from src.v3.run_env import V3RunEnv
+        from src.v3.card_scorer import CardScorer as V3CardScorer
+        from src.callbacks import EpisodeLoggerCallback
+
+        card_scorer = V3CardScorer(path="data/card_scores.json")
+        env = V3RunEnv(
+            communicator=communicator,
+            run_tracker=tracker,
+            card_scorer=card_scorer,
+            timeout_seconds=20.0,
+        )
+
+        model_path     = "data/v3_run_model.zip"
+        checkpoint_dir = "data/v3_checkpoints"
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        if os.path.exists(model_path):
+            logger.info("Loading existing v3 model from %s", model_path)
+            model = RecurrentPPO.load(model_path, env=env)
+        else:
+            logger.info("Creating new v3 RecurrentPPO model (MlpLstmPolicy)")
+            model = RecurrentPPO(
+                "MlpLstmPolicy",
+                env,
+                verbose=1,
+                n_steps=512,
+                batch_size=64,
+                n_epochs=10,
+                gamma=0.99,
+                gae_lambda=0.95,
+                learning_rate=3e-4,
+                policy_kwargs={"lstm_hidden_size": 256},
+                tensorboard_log="data/v3_tensorboard/",
+            )
+
+        callbacks = CallbackList([
+            EpisodeLoggerCallback(summary_freq=10),
+            CheckpointCallback(
+                save_freq=100,
+                save_path=checkpoint_dir,
+                name_prefix="v3_run",
+                verbose=1,
+            ),
+        ])
+
+        logger.info("Starting v3 RL training (RecurrentPPO, MlpLstmPolicy)...")
+        try:
+            model.learn(total_timesteps=10_000_000, callback=callbacks)
+            logger.info("Training complete.")
+        except KeyboardInterrupt:
+            logger.info("Training interrupted.")
+        finally:
+            model.save(model_path)
+            logger.info("Model saved to %s", model_path)
+
     elif use_rl:
         from sb3_contrib import MaskablePPO
         from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback
