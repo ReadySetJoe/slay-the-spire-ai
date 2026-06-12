@@ -109,9 +109,11 @@ class V3RunEnv(RunEnv):
     def reset(self, seed=None, options=None):
         self._turn_state = self._empty_turn_state()
         self._reset_combat_tracking()
-        # super().reset() calls self._next_actionable_state() via V3RunEnv override
-        # which uses _receive_with_timeout(). Shape is correct (250).
-        return super().reset(seed=seed, options=options)
+        # super().reset() sets self._current_state as a side effect; we then
+        # re-encode with turn_state + card_scorer so the first obs is consistent
+        # with step() observations (EMA scores instead of static heuristic).
+        super().reset(seed=seed, options=options)
+        return self._obs(), {}
 
     # --- step ---
 
@@ -267,6 +269,12 @@ class V3RunEnv(RunEnv):
     # --- game over ---
 
     def _handle_game_over(self, prev: GameState, state: GameState):
+        # Feed final combat data to CardScorer before computing game-over reward.
+        # When the last monster dies the game jumps straight to GAME_OVER, so
+        # _on_combat_end() is never reached via the normal transition check.
+        if prev.is_in_combat:
+            self._on_combat_end()
+
         reward = self.reward_shaper.terminal_reward(state.floor)
         self._episode_reward_total += reward
 
