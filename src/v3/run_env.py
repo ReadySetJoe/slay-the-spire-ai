@@ -117,10 +117,20 @@ class V3RunEnv(RunEnv):
     def reset(self, seed=None, options=None):
         self._turn_state = self._empty_turn_state()
         self._reset_combat_tracking()
-        # super().reset() sets self._current_state as a side effect; we then
-        # re-encode with turn_state + card_scorer so the first obs is consistent
-        # with step() observations (EMA scores instead of static heuristic).
-        super().reset(seed=seed, options=options)
+        # super().reset() sets self._current_state via _next_actionable_state().
+        # If the game is hung/dead after a truncated episode, that call will raise
+        # HungEpisodeError — retry until the game recovers (e.g. after STS restart).
+        attempt = 0
+        while True:
+            try:
+                super().reset(seed=seed, options=options)
+                break
+            except HungEpisodeError:
+                attempt += 1
+                logger.warning(
+                    "Game not responding during reset() (attempt %d) — "
+                    "waiting for STS to recover...", attempt
+                )
         return self._obs(), {}
 
     # --- step ---
