@@ -126,7 +126,7 @@ Model is saved to `data/v2_run_model.zip`. Checkpoints are written to `data/v2_c
 | | v2 | v3 |
 |---|---|---|
 | Policy | `MaskablePPO` (MLP) | `RecurrentPPO` (LSTM, hidden=256) |
-| Obs size | 227 floats | 250 floats |
+| Obs size | 227 floats | 354 floats (250 game state + 104 action mask) |
 | Monster features | 6 per slot (scalar intent) | 8 per slot (binary intent flags) |
 | Turn context | — | 12 floats appended each step |
 | Card synergy scores | Static tier heuristic | EMA updated from combat performance |
@@ -148,7 +148,7 @@ main.py --v3
 
 One episode = one complete run. The LSTM hidden state persists across steps within an episode, giving the policy memory of earlier floors.
 
-### Observation Space — 250 floats
+### Observation Space — 354 floats
 
 **Global block (55 floats) — unchanged from v2**
 
@@ -181,6 +181,10 @@ One episode = one complete run. The LSTM hidden state persists across steps with
 | 247 | block gained this turn / max_hp |
 | 248 | last card was a power (binary) |
 | 249 | last card was a debuff card (binary) |
+
+**Action mask block (104 floats) — appended at [250:354]:**
+
+`RecurrentPPO` has no native action masking support. The current legal-action mask is appended to every observation so the LSTM can learn which actions are valid for the current screen. Invalid actions chosen by the policy are also corrected to a random valid action in `step()` before being sent to the game.
 
 ### Action Space — 104 discrete actions
 
