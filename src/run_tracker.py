@@ -17,6 +17,14 @@ class RunTracker:
         self.live_state_writer = live_state_writer
         self.run_number = self._load_last_run_number()
         self.runs: list[dict] = []
+        self.hung_count: int = 0
+
+    def record_hung(self) -> None:
+        """Record a hung episode (no game response within timeout). Not a real run."""
+        self.hung_count += 1
+        logger.info("Hung episode #%d recorded (program failure, not a death)", self.hung_count)
+        if self.live_state_writer:
+            self.live_state_writer.write_run_summary(self.summary())
 
     def _load_last_run_number(self) -> int:
         try:
@@ -91,13 +99,14 @@ class RunTracker:
         )
 
     def summary(self) -> dict:
-        wins = sum(1 for r in self.runs if r["result"] == "win")
+        wins   = sum(1 for r in self.runs if r["result"] == "win")
         losses = sum(1 for r in self.runs if r["result"] == "loss")
-        total = len(self.runs)
+        total  = len(self.runs)
         return {
-            "total_runs": total,
-            "wins": wins,
-            "losses": losses,
-            "win_rate": wins / total if total > 0 else 0,
-            "avg_floor": sum(r["floor_reached"] for r in self.runs) / total if total > 0 else 0,
+            "total_runs":  total,
+            "wins":        wins,
+            "losses":      losses,
+            "hung":        self.hung_count,
+            "win_rate":    wins / total if total > 0 else 0,
+            "avg_floor":   sum(r["floor_reached"] for r in self.runs) / total if total > 0 else 0,
         }

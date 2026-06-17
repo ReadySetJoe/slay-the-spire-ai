@@ -8,14 +8,15 @@ The agent communicates with the game via [CommunicationMod](https://github.com/F
 
 ## Versioning
 
-Two learning algorithm versions are in active development:
+Three learning algorithm versions are in development:
 
-| Version | Episode scope | Decisions | Flag |
-|---|---|---|---|
-| **v1** (`--rl`) | One combat | RL for combat; `SimpleAgent` for everything else | `--rl` |
-| **v2** (`--v2`) | One full run | RL for all decisions (combat + map + cards + shop + rest) | `--v2` |
+| Version | Episode scope | Decisions | Policy | Flag |
+|---|---|---|---|---|
+| **v1** (`--rl`) | One combat | RL for combat; `SimpleAgent` for everything else | `MaskablePPO` (MLP) | `--rl` |
+| **v2** (`--v2`) | One full run | RL for all decisions (combat + map + cards + shop + rest) | `MaskablePPO` (MLP) | `--v2` |
+| **v3** (`--v3`) | One full run | RL for all decisions — same scope as v2 | `RecurrentPPO` (LSTM) | `--v3` |
 
-v1 is the original approach. v2 is the current research direction — it replaces `SimpleAgent` entirely and lets the RL agent learn the full game loop.
+v1 is the original approach. v2 replaced `SimpleAgent` with a full-run MLP policy. v3 is the current research direction — it swaps in a recurrent LSTM policy, expands the observation space with per-turn context, and improves reward signals for relics and energy use.
 
 ---
 
@@ -115,6 +116,140 @@ model.learn(total_timesteps=10_000_000)
 ```
 
 Model is saved to `data/v2_run_model.zip`. Checkpoints are written to `data/v2_checkpoints/` every 100 steps with the prefix `v2_run`.
+
+---
+
+## v3: Recurrent Full-Run RL
+
+### What's new vs v2
+
+| | v2 | v3 |
+|---|---|---|
+| Policy | `MaskablePPO` (MLP) | `RecurrentPPO` (LSTM, hidden=256) |
+| Obs size | 227 floats | 354 floats (250 game state + 104 action mask) |
+| Monster features | 6 per slot (scalar intent) | 8 per slot (binary intent flags) |
+| Turn context | — | 12 floats appended each step |
+| Card synergy scores | Static tier heuristic | EMA updated from combat performance |
+| Energy waste penalty | −0.3 × remaining/4 | −0.5 × remaining/3 |
+| Relic rewards | open=0.07, combat=0.05, boss=0.10 | open=0.25, combat=0.15, boss=0.20 |
+| Hung watchdog | — | 20 s timeout, records truncated episode |
+
+### Architecture
+
+```
+main.py --v3
+  └─ V3RunEnv (extends RunEnv)
+       ├─ reset()  → resets turn state + combat tracking, calls super().reset()
+       ├─ step()   → RecurrentPPO picks from 104-action space
+       │              updates turn_state + CardScorer after each combat
+       │              20 s hung watchdog on receive_state()
+       └─ masks    → inherited from v2 RunActionSpace (unchanged)
+```
+
+One episode = one complete run. The LSTM hidden state persists across steps within an episode, giving the policy memory of earlier floors.
+
+### Observation Space — 354 floats
+
+**Global block (55 floats) — unchanged from v2**
+
+**Combat block (123 floats) — expanded from v2's 112:**
+- Hand: 10 card slots × 7 features — unchanged
+- Monsters: 5 slots × 8 features (HP ratio, max HP scale, block ratio, **is_attacking**, **is_buffing**, **is_debuffing**, vuln stacks, weak stacks) — v2 used a single scalar intent; v3 uses three binary flags
+- Aggregate intent: 2 floats (any enemy attacking, attacking enemy count / 5)
+- Player powers: Strength, Dexterity, Weak, Vulnerable, Barricade — unchanged
+- Turn metadata: draw pile, discard pile, turn number — unchanged
+- Debuff signal: fraction of hand cards that apply Vulnerable/Weak — unchanged
+
+**Non-combat block (60 floats) — same layout as v2, different synergy scores:**
+- Choices: 8 slots × 4 features (tier value, **CardScorer EMA score**, cost ratio, availability)
+- Deck synergy context: exhaust/strength/draw/block/curse counts
+- Screen metadata: shop affordability, rest heal, map node availability
+
+**Turn context block (12 floats) — new in v3, appended at [238:250]:**
+
+| Index | Feature |
+|---|---|
+| 238 | actions taken this turn / 10 |
+| 239 | energy spent this turn / 4 |
+| 240 | attacks played / 5 |
+| 241 | skills played / 5 |
+| 242 | powers played / 3 |
+| 243 | strength gained / 10 |
+| 244 | vulnerable applied this turn (binary) |
+| 245 | weak applied this turn (binary) |
+| 246 | damage dealt this turn / max_hp |
+| 247 | block gained this turn / max_hp |
+| 248 | last card was a power (binary) |
+| 249 | last card was a debuff card (binary) |
+
+**Action mask block (104 floats) — appended at [250:354]:**
+
+`RecurrentPPO` has no native action masking support. The current legal-action mask is appended to every observation so the LSTM can learn which actions are valid for the current screen. Invalid actions chosen by the policy are also corrected to a random valid action in `step()` before being sent to the game.
+
+### Action Space — 104 discrete actions
+
+Identical to v2 — see the v2 section above.
+
+### CardScorer
+
+After each combat, `V3RunEnv` updates `CardScorer` with the cards played and a performance signal:
+
+```
+performance = combat_total_damage / combat_total_enemy_max_hp  (capped at 1.0)
+EMA         = (1 − α) × prior_score + α × performance          (α = 0.05)
+```
+
+The EMA score for each card is used as the `synergy_score` feature in the non-combat observation (choice slots). Cards default to 0.5 until they accumulate data. Scores are persisted to `data/v3_card_scores.json` after each combat.
+
+### Reward Shaping
+
+**Combat steps** — same formula as v2 but with a tighter energy penalty:
+```
+reward = damage_dealt / max_hp
+       − damage_taken / max_hp
+       + 0.1 × kills
+       + 0.05 × new_debuff_stacks
+       + 0.03  [if attack after debuffing this turn]
+       − 0.5 × (energy_remaining / 3)  [on END TURN only]
+```
+
+**Non-combat steps** — same as v2 except relic rewards:
+- Open chest: +0.25 (v2: +0.07)
+- Combat relic pickup: +0.15 (v2: +0.05)
+- Boss relic choice: +0.20 (v2: +0.10)
+- Shop relic: +0.15 (v2: +0.05)
+- All other non-combat rewards: unchanged from v2
+
+**Terminal reward** — unchanged:
+```
+terminal = (floor / 55) × 3.0 − 1.0
+```
+
+### Hung Watchdog
+
+`receive_state()` is wrapped in a 20 s daemon thread. If no game response arrives:
+- Returns `truncated=True` with `{"hung": True, "floor": N}` in info
+- Calls `run_tracker.record_hung()` (tracked separately from wins/losses)
+- Training continues — the LSTM state resets on the next `reset()` call
+
+### Training Setup
+
+```python
+RecurrentPPO(
+    "MlpLstmPolicy",
+    env,                # V3RunEnv — one episode per full run
+    learning_rate=3e-4,
+    n_steps=512,        # shorter rollout to fit LSTM sequences in memory
+    batch_size=64,
+    n_epochs=10,
+    gamma=0.99,
+    gae_lambda=0.95,
+    policy_kwargs={"lstm_hidden_size": 256},
+)
+model.learn(total_timesteps=10_000_000)
+```
+
+Model is saved to `data/v3_run_model.zip`. Checkpoints are written to `data/v3_checkpoints/` every 100 steps with the prefix `v3_run`.
 
 ---
 
@@ -237,6 +372,11 @@ python main.py --rl
 python main.py --v2
 ```
 
+**v3 RL training** (RecurrentPPO/LSTM for all decisions — same scope as v2, with turn memory):
+```bash
+python main.py --v3
+```
+
 ### Web dashboard
 
 A live dashboard is available while the bot is running:
@@ -272,6 +412,11 @@ src/
     run_encoder.py     # v2 GameState → 227-float observation vector
     run_action_space.py # v2 action discretization + mask generation (104 actions)
     run_reward.py      # v2 reward shaping (combat + non-combat + terminal)
+  v3/
+    run_env.py         # v3 Gymnasium env (extends v2; adds LSTM, hung watchdog, CardScorer)
+    run_encoder.py     # v3 GameState → 250-float observation vector (intent flags + turn context)
+    run_reward.py      # v3 reward shaping (stronger relic rewards, tighter energy penalty)
+    card_scorer.py     # EMA card scorer updated from combat-damage performance
 main.py              # Entry point (launched by CommunicationMod)
 dashboard.py         # Flask web dashboard
 ```
@@ -287,7 +432,10 @@ All paths are relative to the working directory at launch time. When Communicati
 | `data/checkpoints/` | v1 periodic model snapshots (`combat_N_steps.zip`) |
 | `data/v2_run_model.zip` | v2 final trained model |
 | `data/v2_checkpoints/` | v2 periodic model snapshots (`v2_run_N_steps.zip`) |
-| `data/card_scores.json` | Learned card quality EMA scores |
+| `data/v3_run_model.zip` | v3 final trained model |
+| `data/v3_checkpoints/` | v3 periodic model snapshots (`v3_run_N_steps.zip`) |
+| `data/card_scores.json` | v1 learned card quality EMA scores |
+| `data/v3_card_scores.json` | v3 CardScorer EMA scores (combat-performance driven) |
 | `data/graphs/performance.png` | Performance visualizations (regenerated every 10 runs) |
 | `data/live_state.json` | Real-time state for the dashboard (overwritten each step) |
 | `game.log` | Detailed action/decision log |

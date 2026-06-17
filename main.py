@@ -17,47 +17,71 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _latest_checkpoint(checkpoint_dir: str, prefix: str = "combat") -> "tuple[str, int] | None":
-    """Return (path, step_count) of the highest-step checkpoint file, or None."""
+def _all_checkpoints(checkpoint_dir: str, prefix: str = "combat") -> "list[tuple[str, int]]":
+    """Return (path, step_count) pairs for all valid checkpoint files, sorted descending by step."""
     files = glob.glob(os.path.join(checkpoint_dir, f"{prefix}_*_steps.zip"))
-    best_path, best_steps = None, -1
+    results = []
     for f in files:
         m = re.search(rf"{re.escape(prefix)}_(\d+)_steps\.zip$", f)
         if m:
-            steps = int(m.group(1))
-            if steps > best_steps:
-                best_steps, best_path = steps, f
-    return (best_path, best_steps) if best_path else None
+            results.append((f, int(m.group(1))))
+    results.sort(key=lambda x: x[1], reverse=True)
+    return results
 
 
-def _load_model(model_path: str, checkpoint_dir: str, env, prefix: str = "combat"):
+def _load_model(model_path: str, checkpoint_dir: str, env, prefix: str = "combat", model_class=None):
     """Load the most recent model: prefers whichever of the final save or
-    latest checkpoint has the newer modification time."""
-    from sb3_contrib import MaskablePPO
+    latest valid checkpoint has the newer modification time.
+    Skips checkpoints that are corrupt (truncated mid-write).
 
-    latest = _latest_checkpoint(checkpoint_dir, prefix=prefix)
+    model_class: SB3 algorithm class to use for loading (default: MaskablePPO).
+    """
+    import zipfile
+    if model_class is None:
+        from sb3_contrib import MaskablePPO
+        model_class = MaskablePPO
+
+    def _try_load_checkpoint(path, steps):
+        try:
+            zipfile.ZipFile(path).close()
+        except zipfile.BadZipFile:
+            logger.warning("Skipping corrupt checkpoint %s (bad zip)", path)
+            return None
+        try:
+            model = model_class.load(path, env=env)
+        except ValueError as e:
+            logger.warning("Skipping incompatible checkpoint %s (%s)", path, e)
+            return None
+        logger.info("Resumed from checkpoint %s (%d steps)", path, steps)
+        return model
+
+    checkpoints = _all_checkpoints(checkpoint_dir, prefix=prefix)
     has_final = os.path.exists(model_path)
 
-    if latest and has_final:
-        ckpt_path, ckpt_steps = latest
+    if checkpoints and has_final:
+        ckpt_path, ckpt_steps = checkpoints[0]
         if os.path.getmtime(ckpt_path) > os.path.getmtime(model_path):
-            model = MaskablePPO.load(ckpt_path, env=env)
-            logger.info("Resumed from checkpoint %s (%d steps)", ckpt_path, ckpt_steps)
-        else:
-            model = MaskablePPO.load(model_path, env=env)
-            logger.info("Loaded final model from %s", model_path)
-        return model
-
-    if latest:
-        ckpt_path, ckpt_steps = latest
-        model = MaskablePPO.load(ckpt_path, env=env)
-        logger.info("Resumed from checkpoint %s (%d steps)", ckpt_path, ckpt_steps)
-        return model
-
-    if has_final:
-        model = MaskablePPO.load(model_path, env=env)
+            for ckpt_path, ckpt_steps in checkpoints:
+                model = _try_load_checkpoint(ckpt_path, ckpt_steps)
+                if model is not None:
+                    return model
+        model = model_class.load(model_path, env=env)
         logger.info("Loaded final model from %s", model_path)
         return model
+
+    if checkpoints:
+        for ckpt_path, ckpt_steps in checkpoints:
+            model = _try_load_checkpoint(ckpt_path, ckpt_steps)
+            if model is not None:
+                return model
+
+    if has_final:
+        try:
+            model = model_class.load(model_path, env=env)
+            logger.info("Loaded final model from %s", model_path)
+            return model
+        except ValueError as e:
+            logger.warning("Skipping incompatible final model %s (%s)", model_path, e)
 
     return None
 
@@ -109,6 +133,61 @@ def main():
         ])
 
         logger.info("Starting v2 RL training (MaskablePPO, full-run episodes)...")
+        try:
+            model.learn(total_timesteps=10_000_000, callback=callbacks)
+            logger.info("Training complete.")
+        except KeyboardInterrupt:
+            logger.info("Training interrupted.")
+        finally:
+            model.save(model_path)
+            logger.info("Model saved to %s", model_path)
+
+    elif "--v3" in sys.argv:
+        from sb3_contrib import RecurrentPPO
+        from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback
+        from src.v3.run_env import V3RunEnv
+        from src.v3.card_scorer import CardScorer as V3CardScorer
+        from src.callbacks import EpisodeLoggerCallback
+
+        card_scorer = V3CardScorer(path="data/v3_card_scores.json")
+        env = V3RunEnv(
+            communicator=communicator,
+            run_tracker=tracker,
+            card_scorer=card_scorer,
+            timeout_seconds=20.0,
+        )
+
+        model_path     = "data/v3_run_model.zip"
+        checkpoint_dir = "data/v3_checkpoints"
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        model = _load_model(model_path, checkpoint_dir, env, prefix="v3_run", model_class=RecurrentPPO)
+        if model is None:
+            logger.info("Creating new v3 RecurrentPPO model (MlpLstmPolicy)")
+            model = RecurrentPPO(
+                "MlpLstmPolicy",
+                env,
+                verbose=1,
+                n_steps=512,
+                batch_size=64,
+                n_epochs=10,
+                gamma=0.99,
+                gae_lambda=0.95,
+                learning_rate=3e-4,
+                policy_kwargs={"lstm_hidden_size": 256},
+            )
+
+        callbacks = CallbackList([
+            EpisodeLoggerCallback(summary_freq=10),
+            CheckpointCallback(
+                save_freq=100,
+                save_path=checkpoint_dir,
+                name_prefix="v3_run",
+                verbose=1,
+            ),
+        ])
+
+        logger.info("Starting v3 RL training (RecurrentPPO, MlpLstmPolicy)...")
         try:
             model.learn(total_timesteps=10_000_000, callback=callbacks)
             logger.info("Training complete.")
