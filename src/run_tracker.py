@@ -12,9 +12,11 @@ _GRAPH_REGEN_INTERVAL = 10  # regenerate performance graphs every N runs
 
 
 class RunTracker:
-    def __init__(self, log_path: str = "data/run_log.jsonl", live_state_writer=None):
+    def __init__(self, log_path: str = "data/run_log.jsonl", live_state_writer=None,
+                 version: "str | None" = None):
         self.log_path = log_path
         self.live_state_writer = live_state_writer
+        self.version = version
         self.run_number = self._load_last_run_number()
         self.runs: list[dict] = []
         self.hung_count: int = 0
@@ -28,14 +30,16 @@ class RunTracker:
 
     def _load_last_run_number(self) -> int:
         try:
-            last_line = None
+            last_num = 0
             with open(self.log_path) as f:
                 for line in f:
                     stripped = line.strip()
-                    if stripped:
-                        last_line = stripped
-            if last_line:
-                return json.loads(last_line).get("run_number", 0)
+                    if not stripped:
+                        continue
+                    record = json.loads(stripped)
+                    if self.version is None or record.get("version") == self.version:
+                        last_num = max(last_num, record.get("run_number", 0))
+            return last_num
         except (FileNotFoundError, json.JSONDecodeError, KeyError):
             pass
         return 0

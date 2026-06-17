@@ -94,7 +94,9 @@ def main():
     live_writer = LiveStateWriter(path="data/live_state.json")
 
     communicator = Communicator()
-    tracker = RunTracker(log_path="data/run_log.jsonl", live_state_writer=live_writer)
+    _version = "v3" if "--v3" in sys.argv else ("v2" if "--v2" in sys.argv else "v1")
+    tracker = RunTracker(log_path="data/run_log.jsonl", live_state_writer=live_writer,
+                         version=_version)
 
     from src.card_scorer import CardScorer
     scorer = CardScorer(path="data/card_scores.json")

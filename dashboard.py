@@ -100,12 +100,12 @@ _STATS_HTML = f"""<!DOCTYPE html>
         <span><span class="green" id="v1-w">—</span> / <span class="red" id="v1-l">—</span></span></div>
     </div>
     <div class="v-block">
-      <div class="v-label">V2 · FULL RUN</div>
-      <div class="stat-row"><span class="muted">Runs</span>  <span class="gold"  id="v2-runs">—</span></div>
-      <div class="stat-row"><span class="muted">Win %</span> <span class="green" id="v2-wr">—</span></div>
-      <div class="stat-row"><span class="muted">Avg fl</span><span class="blue"  id="v2-fl">—</span></div>
+      <div class="v-label">V3 · RECURRENT</div>
+      <div class="stat-row"><span class="muted">Runs</span>  <span class="gold"  id="v3-runs">—</span></div>
+      <div class="stat-row"><span class="muted">Win %</span> <span class="green" id="v3-wr">—</span></div>
+      <div class="stat-row"><span class="muted">Avg fl</span><span class="blue"  id="v3-fl">—</span></div>
       <div class="stat-row"><span class="muted">W / L</span>
-        <span><span class="green" id="v2-w">—</span> / <span class="red" id="v2-l">—</span></span></div>
+        <span><span class="green" id="v3-w">—</span> / <span class="red" id="v3-l">—</span></span></div>
     </div>
   </div>
   <hr class="divider">
@@ -126,11 +126,11 @@ async function poll() {{
     const rData = await rResp.json();
     const sData = await sResp.json();
     const runs = rData.runs || [];
-    const v1 = stats(runs, "v1"), v2 = stats(runs, "v2");
+    const v1 = stats(runs, "v1"), v3 = stats(runs, "v3");
     // overall chips
-    const allWins = v1.wins + v2.wins;
-    const allLoss = v1.losses + v2.losses;
-    const allRuns = v1.runs + v2.runs;
+    const allWins = v1.wins + v3.wins;
+    const allLoss = v1.losses + v3.losses;
+    const allRuns = v1.runs + v3.runs;
     const allWr   = allRuns ? allWins / allRuns : 0;
     document.getElementById("run-number").textContent   = allRuns || "—";
     document.getElementById("win-rate").textContent     = allRuns ? Math.round(allWr*100)+"%" : "—";
@@ -143,11 +143,11 @@ async function poll() {{
     document.getElementById("v1-fl").textContent   = v1.runs ? v1.avgFl.toFixed(1) : "—";
     document.getElementById("v1-w").textContent    = v1.wins;
     document.getElementById("v1-l").textContent    = v1.losses;
-    document.getElementById("v2-runs").textContent = v2.runs || "—";
-    document.getElementById("v2-wr").textContent   = v2.runs ? Math.round(v2.wr*100)+"%" : "—";
-    document.getElementById("v2-fl").textContent   = v2.runs ? v2.avgFl.toFixed(1) : "—";
-    document.getElementById("v2-w").textContent    = v2.wins;
-    document.getElementById("v2-l").textContent    = v2.losses;
+    document.getElementById("v3-runs").textContent = v3.runs || "—";
+    document.getElementById("v3-wr").textContent   = v3.runs ? Math.round(v3.wr*100)+"%" : "—";
+    document.getElementById("v3-fl").textContent   = v3.runs ? v3.avgFl.toFixed(1) : "—";
+    document.getElementById("v3-w").textContent    = v3.wins;
+    document.getElementById("v3-l").textContent    = v3.losses;
     const deck = ((sData.live || {{}}).deck || []);
     const total = deck.reduce((s,e) => s + e.count, 0);
     document.getElementById("deck-size").textContent = total || "—";
@@ -176,8 +176,8 @@ body {{ padding: 18px; }}
     <div class="legend">
       <span><span class="dot" style="background:#888"></span><span class="muted">v1</span></span>
       <span><span class="dot" style="background:#f39c12"></span><span class="muted">v1 avg</span></span>
-      <span><span class="dot" style="background:#74b9ff"></span><span class="muted">v2</span></span>
-      <span><span class="dot" style="background:#7bed9f"></span><span class="muted">v2 avg</span></span>
+      <span><span class="dot" style="background:#a29bfe"></span><span class="muted">v3</span></span>
+      <span><span class="dot" style="background:#fd79a8"></span><span class="muted">v3 avg</span></span>
     </div>
   </div>
   <canvas id="chart" height="260" style="display:none"></canvas>
@@ -201,22 +201,22 @@ async function poll() {{
     if (!runs.length) {{ noData.style.display=""; canvas.style.display="none"; if(chart){{chart.destroy();chart=null;}} return; }}
     noData.style.display = "none"; canvas.style.display = "";
     const v1 = runs.filter(r=>(r.version||"v1")==="v1");
-    const v2 = runs.filter(r=>(r.version||"v1")==="v2");
-    const v2Max = v2.length ? Math.max(...v2.map(r=>r.run_number)) : 0;
-    const xMax = Math.max(v2Max+5, runs.length+2, 20);
+    const v3 = runs.filter(r=>r.version==="v3");
+    const v3Max = v3.length ? Math.max(...v3.map(r=>r.run_number)) : 0;
+    const xMax = Math.max(v3Max+5, runs.length+2, 20);
     const v1Dots = v1.map(r=>({{ x:r.run_number, y:r.floor_reached }}));
-    const v2Dots = v2.map(r=>({{ x:r.run_number, y:r.floor_reached }}));
+    const v3Dots = v3.map(r=>({{ x:r.run_number, y:r.floor_reached }}));
     const v1Colors = v1.map(r=>r.result==="win"?"rgba(255,215,0,0.85)":"rgba(130,130,160,0.55)");
-    const v2Colors = v2.map(r=>r.result==="win"?"rgba(255,215,0,0.9)":"rgba(74,144,217,0.65)");
+    const v3Colors = v3.map(r=>r.result==="win"?"rgba(255,215,0,0.9)":"rgba(162,155,254,0.7)");
     const v1Avg = rolling(v1.map(r=>r.floor_reached));
-    const v2Avg = rolling(v2.map(r=>r.floor_reached));
+    const v3Avg = rolling(v3.map(r=>r.floor_reached));
     const datasets = [
       {{ label:"v1", data:v1Dots, backgroundColor:v1Colors, pointRadius:4, showLine:false }},
       {{ label:"v1 avg", data:v1.map((r,i)=>({{x:r.run_number,y:v1Avg[i]}})),
          borderColor:"#f39c12", borderWidth:2, pointRadius:0, showLine:true, tension:0.3 }},
-      {{ label:"v2", data:v2Dots, backgroundColor:v2Colors, pointRadius:5, showLine:false }},
-      {{ label:"v2 avg", data:v2.map((r,i)=>({{x:r.run_number,y:v2Avg[i]}})),
-         borderColor:"#7bed9f", borderWidth:2.5, pointRadius:0, showLine:true, tension:0.3 }},
+      {{ label:"v3", data:v3Dots, backgroundColor:v3Colors, pointRadius:5, showLine:false }},
+      {{ label:"v3 avg", data:v3.map((r,i)=>({{x:r.run_number,y:v3Avg[i]}})),
+         borderColor:"#fd79a8", borderWidth:2.5, pointRadius:0, showLine:true, tension:0.3 }},
     ];
     const opts = {{
       animation:false, responsive:true,
@@ -242,7 +242,7 @@ async function poll() {{
 setInterval(poll, 3000); poll();
 </script></body></html>"""
 
-# ── /reward ───────────────────────────────────────────────────────────────────
+# ── /reward ──────────────────────────────────────────────────────────────────
 
 _REWARD_HTML = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">{_CHARTJS}<style>
@@ -254,11 +254,11 @@ body {{ padding: 18px; }}
 </style></head>
 <body><div class="panel">
   <div class="header">
-    <div class="title">V2 EPISODE REWARD</div>
+    <div class="title">V3 EPISODE REWARD</div>
     <div class="sub muted">avg (last 20): <span class="green" id="avg-reward">—</span></div>
   </div>
   <canvas id="chart" height="220" style="display:none"></canvas>
-  <div class="no-data" id="no-data">No v2 run data yet</div>
+  <div class="no-data" id="no-data">No v3 run data yet</div>
 </div>
 <script>
 const ROLL = 20;
@@ -272,7 +272,7 @@ function rolling(arr) {{
 async function poll() {{
   try {{
     const data = await (await fetch("/api/state")).json();
-    const rewards = (data.v2 || {{}}).episode_rewards || [];
+    const rewards = (data.v3 || {{}}).episode_rewards || [];
     const canvas = document.getElementById("chart");
     const noData = document.getElementById("no-data");
     if (!rewards.length) {{ noData.style.display=""; canvas.style.display="none"; if(chart){{chart.destroy();chart=null;}} return; }}
@@ -331,12 +331,12 @@ body {{ padding: 18px; }}
             stroke-linecap="round" stroke-dasharray="314 314" stroke-dashoffset="0"/>
     </svg>
     <div class="gauge-pct green" id="gauge-pct">—</div>
-    <div class="gauge-label">avg energy used per turn (v2)</div>
+    <div class="gauge-label">avg energy used per turn (v3)</div>
   </div>
   <hr class="divider">
   <div class="trend-label">per-run trend</div>
   <canvas id="trend-chart" height="100" style="display:none"></canvas>
-  <div class="no-data" id="no-data" style="padding:20px 0">No v2 data yet</div>
+  <div class="no-data" id="no-data" style="padding:20px 0">No v3 data yet</div>
 </div>
 <script>
 const ARC = Math.PI * 100;
@@ -347,7 +347,7 @@ function effColor(v) {{
 async function poll() {{
   try {{
     const data = await (await fetch("/api/state")).json();
-    const hist = (data.v2 || {{}}).energy_efficiency || [];
+    const hist = (data.v3 || {{}}).energy_efficiency || [];
     const noData = document.getElementById("no-data");
     const canvas = document.getElementById("trend-chart");
     if (!hist.length) {{
@@ -406,7 +406,7 @@ body {{ padding: 18px; }}
     <div class="title">FLOOR DEATH MAP</div>
     <div class="legend">
       <span><span class="dot" style="background:rgba(130,130,160,0.65)"></span><span class="muted">v1</span></span>
-      <span><span class="dot" style="background:rgba(74,144,217,0.75)"></span><span class="muted">v2</span></span>
+      <span><span class="dot" style="background:rgba(162,155,254,0.75)"></span><span class="muted">v3</span></span>
     </div>
   </div>
   <canvas id="chart" height="300" style="display:none"></canvas>
@@ -423,20 +423,20 @@ async function poll() {{
     if (!runs.length) {{ noData.style.display=""; canvas.style.display="none"; if(chart){{chart.destroy();chart=null;}} return; }}
     noData.style.display="none"; canvas.style.display="";
     // bucket by floor
-    const v1Counts = {{}}, v2Counts = {{}};
+    const v1Counts = {{}}, v3Counts = {{}};
     runs.forEach(r => {{
       const fl = r.floor_reached;
       const ver = r.version || "v1";
       if (ver==="v1") v1Counts[fl] = (v1Counts[fl]||0)+1;
-      else v2Counts[fl] = (v2Counts[fl]||0)+1;
+      else v3Counts[fl] = (v3Counts[fl]||0)+1;
     }});
     const maxFl = Math.max(...runs.map(r=>r.floor_reached), 1);
     const floors = Array.from({{length:maxFl}},(_,i)=>i+1);
     const v1Data = floors.map(f=>v1Counts[f]||0);
-    const v2Data = floors.map(f=>v2Counts[f]||0);
+    const v3Data = floors.map(f=>v3Counts[f]||0);
     const datasets = [
       {{ label:"v1", data:v1Data, backgroundColor:"rgba(130,130,160,0.65)", borderRadius:2 }},
-      {{ label:"v2", data:v2Data, backgroundColor:"rgba(74,144,217,0.75)", borderRadius:2 }},
+      {{ label:"v3", data:v3Data, backgroundColor:"rgba(162,155,254,0.75)", borderRadius:2 }},
     ];
     const opts = {{
       animation:false, responsive:true,
@@ -478,7 +478,7 @@ body {{ padding: 18px; }}
 <body><div class="panel">
   <div class="title">LAST RUN · ACTION MIX</div>
   <canvas id="chart" height="240" style="display:none"></canvas>
-  <div class="no-data" id="no-data">No v2 data yet</div>
+  <div class="no-data" id="no-data">No v3 data yet</div>
   <div class="legend-list" id="legend"></div>
 </div>
 <script>
@@ -489,7 +489,7 @@ let chart = null;
 async function poll() {{
   try {{
     const data = await (await fetch("/api/state")).json();
-    const ac = (data.v2 || {{}}).action_counts_last_run || {{}};
+    const ac = (data.v3 || {{}}).action_counts_last_run || {{}};
     const canvas = document.getElementById("chart");
     const noData = document.getElementById("no-data");
     const total = KEYS.reduce((s,k)=>s+(ac[k]||0),0);
@@ -630,7 +630,7 @@ const TIER_STYLE = {{
 async function poll() {{
   try {{
     const data = await (await fetch("/api/state")).json();
-    const picks = (data.v2 || {{}}).recent_card_picks || [];
+    const picks = (data.v3 || {{}}).recent_card_picks || [];
     const list = document.getElementById("pick-list");
     const noData = document.getElementById("no-data");
     if (!picks.length) {{ noData.style.display=""; list.innerHTML=""; return; }}
@@ -761,12 +761,12 @@ if __name__ == "__main__":
     print(f"Reading from: {os.path.abspath(data_dir)}")
     print()
     print("── OBS overlay endpoints ──────────────────────────")
-    print(f"  Stats (v1 vs v2)   {base}/stats")
+    print(f"  Stats (v1 vs v3)   {base}/stats")
     print(f"  Training chart     {base}/training")
-    print(f"  Reward curve (v2)  {base}/reward")
+    print(f"  Reward curve (v3)  {base}/reward")
     print(f"  Energy efficiency  {base}/energy")
     print(f"  Floor death map    {base}/deaths")
-    print(f"  Action mix (v2)    {base}/actions")
+    print(f"  Action mix (v3)    {base}/actions")
     print(f"  Live ticker        {base}/ticker")
     print(f"  Card pick history  {base}/cards")
     print()

@@ -308,7 +308,7 @@ class V3RunEnv(RunEnv):
 
         writer = self.run_tracker.live_state_writer
         if writer:
-            writer.write_v2_metrics(
+            writer.write_v3_metrics(
                 action_counts=dict(self._action_buckets),
                 card_picks=list(self._card_picks_this_run),
                 episode_reward=round(self._episode_reward_total, 4),
