@@ -106,6 +106,10 @@ class V3RunEnv(RunEnv):
                 if "START" in state.available_commands:
                     self.communicator.send_command("START IRONCLAD 0")
                 continue
+            # Skip transitional NONE screens (game is in_game but hasn't set a screen yet)
+            if state.screen_type == "NONE":
+                self.communicator.send_command("PROCEED")
+                continue
             return state
 
     # --- reset ---
@@ -142,6 +146,8 @@ class V3RunEnv(RunEnv):
             valid = np.where(mask)[0]
             if len(valid) > 0:
                 action = int(np.random.choice(valid))
+            else:
+                action = 99  # PROCEED: safest fallback when no valid action exists
 
         command = self._action_space_helper.action_to_command(action, prev)
         logger.info("Floor %d | HP %d/%d | Screen: %s | Action: %s",
@@ -166,6 +172,19 @@ class V3RunEnv(RunEnv):
 
         if state.screen_type == "GAME_OVER":
             return self._handle_game_over(prev, state)
+
+        # Skip transitional NONE states (in_game but no screen set yet).
+        # These can occur briefly after a non-combat action; _next_actionable_state
+        # will send PROCEED and wait for a real screen.
+        if state.screen_type == "NONE" or not state.in_game:
+            try:
+                state = self._next_actionable_state()
+            except HungEpisodeError:
+                logger.warning("Hung episode waiting for actionable state at floor %d", prev.floor)
+                self.run_tracker.record_hung()
+                return self._obs(), 0.0, False, True, {"hung": True, "floor": prev.floor}
+            if state.screen_type == "GAME_OVER":
+                return self._handle_game_over(prev, state)
 
         # Combat transition detection
         prev_in_combat = prev.is_in_combat
