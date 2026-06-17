@@ -132,10 +132,13 @@ class V3RunEnv(RunEnv):
 
         prev = self._current_state
 
-        # RecurrentPPO has no native masking — correct invalid actions before
-        # sending to the game so the LSTM learns from the mask in the obs.
+        # RecurrentPPO has no native masking. Correct invalid actions so the
+        # game always advances, but add a penalty so the LSTM still learns from
+        # the mask in the obs rather than getting silently redirected.
         mask = self._action_space_helper.get_action_mask(prev)
+        invalid_action_penalty = 0.0
         if not mask[action]:
+            invalid_action_penalty = -0.05
             valid = np.where(mask)[0]
             if len(valid) > 0:
                 action = int(np.random.choice(valid))
@@ -174,7 +177,7 @@ class V3RunEnv(RunEnv):
             self._turn_state = self._empty_turn_state()
 
         # Reward
-        reward = self._compute_reward(action, prev, state)
+        reward = self._compute_reward(action, prev, state) + invalid_action_penalty
 
         # Turn state + combat tracking updates
         if prev_in_combat:

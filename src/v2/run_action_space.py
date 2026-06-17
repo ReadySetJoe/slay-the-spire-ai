@@ -140,6 +140,8 @@ class RunActionSpace:
                 mask[_PLAY_NT_START + slot] = True
 
         for slot, potion in enumerate(state.potions[:MAX_POTIONS]):
+            if potion.get("id", "") == "Potion Slot":  # empty slot
+                continue
             if not potion.get("can_use", False):
                 continue
             if potion.get("requires_target", False):

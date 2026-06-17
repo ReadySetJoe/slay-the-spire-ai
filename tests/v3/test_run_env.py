@@ -91,15 +91,16 @@ def test_obs_includes_action_mask():
     assert set(mask_slice).issubset({0.0, 1.0})
 
 
-def test_invalid_action_is_corrected():
-    """Step with a masked-out action should not raise and should complete."""
+def test_invalid_action_is_corrected_with_penalty():
+    """Invalid action gets corrected (game advances) and incurs a -0.05 penalty."""
     env, comm = make_env()
     comm.receive_state.return_value = make_state()
     env.reset()
     comm.receive_state.return_value = make_state()
-    # action 99 (PROCEED) is invalid during combat — should be corrected silently
+    # action 99 (PROCEED) is invalid during combat
     obs, reward, terminated, truncated, info = env.step(99)
     assert obs.shape == (V3_OBS_SIZE,)
+    assert reward <= -0.05  # penalty applied regardless of corrected action's reward
 
 
 # --- hung watchdog ---
