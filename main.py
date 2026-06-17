@@ -47,7 +47,11 @@ def _load_model(model_path: str, checkpoint_dir: str, env, prefix: str = "combat
         except zipfile.BadZipFile:
             logger.warning("Skipping corrupt checkpoint %s (bad zip)", path)
             return None
-        model = model_class.load(path, env=env)
+        try:
+            model = model_class.load(path, env=env)
+        except ValueError as e:
+            logger.warning("Skipping incompatible checkpoint %s (%s)", path, e)
+            return None
         logger.info("Resumed from checkpoint %s (%d steps)", path, steps)
         return model
 
@@ -72,9 +76,12 @@ def _load_model(model_path: str, checkpoint_dir: str, env, prefix: str = "combat
                 return model
 
     if has_final:
-        model = model_class.load(model_path, env=env)
-        logger.info("Loaded final model from %s", model_path)
-        return model
+        try:
+            model = model_class.load(model_path, env=env)
+            logger.info("Loaded final model from %s", model_path)
+            return model
+        except ValueError as e:
+            logger.warning("Skipping incompatible final model %s (%s)", model_path, e)
 
     return None
 
