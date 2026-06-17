@@ -17,9 +17,12 @@ def make_env(timeout=20.0, scorer=None):
 
 # --- observation space ---
 
+V3_OBS_SIZE = V3RunEncoder.OBS_SIZE + RunActionSpace.TOTAL_ACTIONS  # 250 + 104 = 354
+
+
 def test_obs_space_shape():
     env, _ = make_env()
-    assert env.observation_space.shape == (V3RunEncoder.OBS_SIZE,)
+    assert env.observation_space.shape == (V3_OBS_SIZE,)
 
 
 def test_action_space_size():
@@ -33,7 +36,7 @@ def test_reset_returns_correct_obs_shape():
     env, comm = make_env()
     comm.receive_state.return_value = make_state()
     obs, info = env.reset()
-    assert obs.shape == (V3RunEncoder.OBS_SIZE,)
+    assert obs.shape == (V3_OBS_SIZE,)
 
 
 def test_reset_clears_turn_state():
@@ -75,6 +78,28 @@ def test_turn_state_resets_on_new_combat():
     comm.receive_state.return_value = make_state()  # back to combat
     env.step(99)  # PROCEED
     assert env._turn_state["attacks_played"] == 0
+
+
+# --- action masking ---
+
+def test_obs_includes_action_mask():
+    env, comm = make_env()
+    comm.receive_state.return_value = make_state()
+    obs, _ = env.reset()
+    mask_slice = obs[V3RunEncoder.OBS_SIZE:]
+    assert mask_slice.shape == (RunActionSpace.TOTAL_ACTIONS,)
+    assert set(mask_slice).issubset({0.0, 1.0})
+
+
+def test_invalid_action_is_corrected():
+    """Step with a masked-out action should not raise and should complete."""
+    env, comm = make_env()
+    comm.receive_state.return_value = make_state()
+    env.reset()
+    comm.receive_state.return_value = make_state()
+    # action 99 (PROCEED) is invalid during combat — should be corrected silently
+    obs, reward, terminated, truncated, info = env.step(99)
+    assert obs.shape == (V3_OBS_SIZE,)
 
 
 # --- hung watchdog ---

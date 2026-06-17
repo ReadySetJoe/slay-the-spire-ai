@@ -34,12 +34,14 @@ class V3RunEnv(RunEnv):
         self._timeout_seconds = timeout_seconds
         self.card_scorer      = card_scorer or CardScorer()
 
-        # Override encoder, reward shaper, and observation space
+        # Override encoder, reward shaper, and observation space.
+        # Obs = 250 game-state features + 104 action-mask bits so the LSTM
+        # can learn which actions are legal without native masking support.
         self.encoder       = V3RunEncoder()
         self.reward_shaper = V3RunRewardShaper()
         self.observation_space = spaces.Box(
             low=0.0, high=1.0,
-            shape=(V3RunEncoder.OBS_SIZE,),
+            shape=(V3RunEncoder.OBS_SIZE + RunActionSpace.TOTAL_ACTIONS,),
             dtype=np.float32,
         )
 
@@ -60,7 +62,9 @@ class V3RunEnv(RunEnv):
 
     def _obs(self, state: Optional[GameState] = None) -> np.ndarray:
         s = state or self._current_state
-        return self.encoder.encode(s, self._turn_state, self.card_scorer)
+        game_obs = self.encoder.encode(s, self._turn_state, self.card_scorer)
+        mask = self._action_space_helper.get_action_mask(s).astype(np.float32)
+        return np.concatenate([game_obs, mask])
 
     def _reset_combat_tracking(self) -> None:
         self._combat_cards_played = []
@@ -126,7 +130,16 @@ class V3RunEnv(RunEnv):
             self._debuff_applied_this_turn = False
             self._current_turn = self._current_state.turn
 
-        prev    = self._current_state
+        prev = self._current_state
+
+        # RecurrentPPO has no native masking — correct invalid actions before
+        # sending to the game so the LSTM learns from the mask in the obs.
+        mask = self._action_space_helper.get_action_mask(prev)
+        if not mask[action]:
+            valid = np.where(mask)[0]
+            if len(valid) > 0:
+                action = int(np.random.choice(valid))
+
         command = self._action_space_helper.action_to_command(action, prev)
         logger.info("Floor %d | HP %d/%d | Screen: %s | Action: %s",
                     prev.floor, prev.current_hp, prev.max_hp, prev.screen_type, command)
